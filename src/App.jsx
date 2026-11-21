@@ -1,10 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { SiteProvider, useSite, usePath, Link, api, currentReseller } from "./lib/api.jsx";
+import { SiteProvider, useSite, usePath, Link, api, currentReseller, useWishlist } from "./lib/api.jsx";
 import { ToastHost } from "./ui.jsx";
 import { readKit, fillTokens } from "./lib/sitekit.js";
 import Home from "./pages/Home.jsx";
 import { Shop, EbookPage, Checkout, OrderPage, TrackPage } from "./pages/Store.jsx";
 import { SupportPage, RequestPage, RefundPage, PoliciesPage, ResellPage, PortalPage } from "./pages/Support.jsx";
+import {
+  BundlePage,
+  JournalPage,
+  JournalPostPage,
+  NewsletterInline,
+  SearchPage,
+  StoreWidgets,
+  WishlistPage,
+} from "./pages/Extras.jsx";
 import Admin from "./admin/Admin.jsx";
 
 function setMeta(name, content) {
@@ -49,6 +58,8 @@ function Nav() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const settings = site?.settings || {};
+  const features = site?.features || {};
+  const wishlist = useWishlist();
   const { content, theme } = useMemo(() => readKit(site), [site]);
   const brand = settings.brand_name || "Neverbasic Diva";
   const tokens = { brand, insta: settings.instagram || "neverbasic_diva", price: Number(settings.resell_price) || 399 };
@@ -75,7 +86,7 @@ function Nav() {
         <div className={`marquee speed-${theme.announcementSpeed || "normal"}`} aria-hidden="true">
           <div className="marquee-track">
             <span>{settings.announcement}</span>
-            <OfferClock endsAt={theme.offerEndsAt} label={content.offer_label} />
+            {features.countdown !== false ? <OfferClock endsAt={theme.offerEndsAt} label={content.offer_label} /> : null}
             <span>{settings.announcement}</span>
             <span>{settings.announcement}</span>
           </div>
@@ -102,6 +113,17 @@ function Nav() {
                 {label}
               </Link>
             ))}
+            {features.journal ? <Link to="/journal" className={path === "/journal" ? "active" : ""}>Journal</Link> : null}
+            {features.search ? (
+              <Link to="/search" className="nav-icon" aria-label="Search the library">
+                ⌕
+              </Link>
+            ) : null}
+            {features.wishlist ? (
+              <Link to="/wishlist" className="nav-icon nav-wish" aria-label="Wishlist">
+                ♡{wishlist.length ? <span className="nav-wish-count">{wishlist.length}</span> : null}
+              </Link>
+            ) : null}
             <Link to="/ebooks" className="btn btn-primary btn-sm nav-cta">
               {fillTokens(content.nav_cta, tokens)}
             </Link>
@@ -165,6 +187,7 @@ function Footer() {
           </Link>
         </div>
       </div>
+      <NewsletterInline />
       <div className="footer-bottom">
         <span>
           © {new Date().getFullYear()} {settings.brand_name || "Neverbasic Diva"}. {content.footer_rights}
@@ -186,6 +209,11 @@ function Routes() {
   if (clean.startsWith("/checkout/")) return <Checkout ebookId={clean.slice("/checkout/".length)} />;
   if (clean.startsWith("/order/")) return <OrderPage reference={clean.slice("/order/".length)} />;
   if (clean === "/track") return <TrackPage />;
+  if (clean === "/search") return <SearchPage />;
+  if (clean === "/wishlist") return <WishlistPage />;
+  if (clean === "/journal") return <JournalPage />;
+  if (clean.startsWith("/journal/")) return <JournalPostPage slug={clean.slice("/journal/".length)} />;
+  if (clean.startsWith("/bundle/")) return <BundlePage slug={clean.slice("/bundle/".length)} />;
   if (clean === "/support") return <SupportPage />;
   if (clean === "/request") return <RequestPage />;
   if (clean === "/refund") return <RefundPage />;
@@ -232,6 +260,7 @@ function Shell() {
   useEffect(() => {
     const { pathname } = new URL(path, window.location.origin);
     if (pathname.startsWith("/admin")) return;
+    if (window.parent !== window) return; // admin live-preview frame — not a real visit
     api("/api/track", { method: "POST", body: { path: pathname, res: currentReseller() } }).catch(() => {});
   }, [path]);
 
@@ -269,6 +298,7 @@ function Shell() {
             <Routes />
           </main>
           <Footer />
+          <StoreWidgets />
         </>
       )}
     </div>

@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, money, prettyDate, prettyDateTime } from "../lib/api.jsx";
 import Studio from "./Studio.jsx";
+import AiStudio from "./AiStudio.jsx";
+import Growth from "./Growth.jsx";
+import Security from "./Security.jsx";
 import {
   Button,
   CopyButton,
@@ -193,6 +196,8 @@ const SECTIONS = [
   ["overview", "Overview", "◈"],
   ["orders", "Orders", "▤"],
   ["ebooks", "Ebooks & PDFs", "❏"],
+  ["ai", "AI studio", "✷"],
+  ["growth", "Growth", "◎"],
   ["payments", "Payments", "₹"],
   ["resell", "Resellers", "↗"],
   ["tickets", "Support", "✉"],
@@ -201,6 +206,7 @@ const SECTIONS = [
   ["reviews", "Reviews", "★"],
   ["design", "Design studio", "◐"],
   ["content", "Site content", "✿"],
+  ["security", "Security", "⛨"],
   ["account", "Account", "⚙"],
 ];
 
@@ -278,6 +284,8 @@ function AdminShell({ data, reload, onLogout }) {
           {section === "overview" ? <Overview data={data} onGo={setSection} /> : null}
           {section === "orders" ? <Orders data={data} reload={reload} /> : null}
           {section === "ebooks" ? <Ebooks data={data} reload={reload} /> : null}
+          {section === "ai" ? <AiStudio data={data} reload={reload} /> : null}
+          {section === "growth" ? <Growth data={data} reload={reload} /> : null}
           {section === "payments" ? <Payments settings={settings} reload={reload} /> : null}
           {section === "resell" ? <ResellAdmin data={data} settings={settings} reload={reload} /> : null}
           {section === "tickets" ? <Tickets data={data} reload={reload} /> : null}
@@ -286,6 +294,7 @@ function AdminShell({ data, reload, onLogout }) {
           {section === "reviews" ? <Reviews data={data} reload={reload} /> : null}
           {section === "design" ? <Studio settings={settings} reload={reload} /> : null}
           {section === "content" ? <Content settings={settings} reload={reload} /> : null}
+          {section === "security" ? <Security data={data} reload={reload} /> : null}
           {section === "account" ? <Account reload={reload} admin={data.admin} /> : null}
         </div>
       </div>
@@ -958,9 +967,52 @@ function Payments({ settings, reload }) {
     "payment_link",
     "upi_id",
     "pay_instructions",
+    "payment_gateway",
+    "currency",
+    "currency_symbol",
+    "razorpay_enabled",
+    "razorpay_key_id",
+    "razorpay_key_secret",
+    "stripe_enabled",
+    "stripe_publishable_key",
+    "stripe_secret_key",
   ]);
   const [showSalt, setShowSalt] = useState(false);
+  const [showRzp, setShowRzp] = useState(false);
+  const [showStripe, setShowStripe] = useState(false);
+  const [testState, setTestState] = useState(null);
+  const [testBusy, setTestBusy] = useState(false);
   const payuReady = draft.payu_enabled === "1" && draft.payu_key && draft.payu_salt;
+  const razorpayReady = draft.razorpay_enabled === "1" && draft.razorpay_key_id && draft.razorpay_key_secret;
+  const stripeReady = draft.stripe_enabled === "1" && draft.stripe_secret_key;
+  const activeGateway =
+    draft.payment_gateway && draft.payment_gateway !== "auto"
+      ? draft.payment_gateway
+      : payuReady
+        ? "payu"
+        : razorpayReady
+          ? "razorpay"
+          : stripeReady
+            ? "stripe"
+            : draft.payment_link
+              ? "link"
+              : draft.upi_id
+                ? "upi"
+                : "manual";
+
+  async function testGateways() {
+    setTestBusy(true);
+    setTestState(null);
+    try {
+      const result = await api("/api/admin/payments/test", { method: "POST" });
+      setTestState(result);
+      toast(`Active gateway: ${result.primary}`);
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setTestBusy(false);
+    }
+  }
 
   return (
     <div className="stack-lg">
@@ -1055,6 +1107,143 @@ function Payments({ settings, reload }) {
         <p className="field-hint">
           Buyers paste their UTR on the order page. You verify it in Orders → Manage → Mark paid, and access
           unlocks instantly.
+        </p>
+      </SectionCard>
+
+      <SectionCard
+        title="Razorpay (cards, UPI, wallets)"
+        subtitle="Paste the key id and secret from Razorpay → Settings → API keys. Test or live keys both work instantly."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save
+          </Button>
+        }
+      >
+        <div className="status-line">
+          <span className={razorpayReady ? "dot good" : "dot warn"} />
+          {razorpayReady ? "Razorpay is connected" : "Razorpay is off"}
+        </div>
+        <Toggle
+          checked={draft.razorpay_enabled === "1"}
+          onChange={(value) => setDraft({ ...draft, razorpay_enabled: value ? "1" : "0" })}
+          label="Enable Razorpay checkout"
+          hint="Opens Razorpay's secure window; the signature is verified server-side before unlocking."
+        />
+        <div className="two-col">
+          <Field label="Key id">
+            <Input value={draft.razorpay_key_id} onChange={(event) => setDraft({ ...draft, razorpay_key_id: event.target.value })} placeholder="rzp_live_…" />
+          </Field>
+          <Field label="Key secret">
+            <div className="input-with-action">
+              <Input
+                type={showRzp ? "text" : "password"}
+                value={draft.razorpay_key_secret}
+                onChange={(event) => setDraft({ ...draft, razorpay_key_secret: event.target.value })}
+                autoComplete="off"
+              />
+              <button type="button" className="input-action" onClick={() => setShowRzp(!showRzp)}>
+                {showRzp ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+        </div>
+        <p className="field-hint">No webhook needed — the browser returns Razorpay's signature and the server verifies it plus the order id before unlocking.</p>
+      </SectionCard>
+
+      <SectionCard
+        title="Stripe (hosted checkout)"
+        subtitle="Paste the secret key. Buyers are redirected to Stripe's hosted page and come back verified."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save
+          </Button>
+        }
+      >
+        <div className="status-line">
+          <span className={stripeReady ? "dot good" : "dot warn"} />
+          {stripeReady ? "Stripe is connected" : "Stripe is off"}
+        </div>
+        <Toggle
+          checked={draft.stripe_enabled === "1"}
+          onChange={(value) => setDraft({ ...draft, stripe_enabled: value ? "1" : "0" })}
+          label="Enable Stripe checkout"
+          hint="Payment is checked against the paid amount before access unlocks."
+        />
+        <div className="two-col">
+          <Field label="Publishable key" hint="Optional — only shown to the browser if you use Stripe.js elsewhere.">
+            <Input value={draft.stripe_publishable_key} onChange={(event) => setDraft({ ...draft, stripe_publishable_key: event.target.value })} placeholder="pk_live_…" />
+          </Field>
+          <Field label="Secret key">
+            <div className="input-with-action">
+              <Input
+                type={showStripe ? "text" : "password"}
+                value={draft.stripe_secret_key}
+                onChange={(event) => setDraft({ ...draft, stripe_secret_key: event.target.value })}
+                autoComplete="off"
+              />
+              <button type="button" className="input-action" onClick={() => setShowStripe(!showStripe)}>
+                {showStripe ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+        </div>
+        <div className="info-block">
+          <p className="field-hint">
+            Optional webhook: <code>{`${window.location.origin}/api/stripe/webhook`}</code> — subscribes to
+            <code> checkout.session.completed</code>. Stripe signs every call; unsigned calls are rejected.
+          </p>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Routing, currency & testing"
+        subtitle="Choose which gateway buyers see, set the currency, and verify your keys with one click."
+        actions={
+          <>
+            <Button size="sm" variant="secondary" onClick={testGateways} loading={testBusy}>
+              Test gateways
+            </Button>
+            <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="status-line">
+          <span className="dot good" />
+          Buyers will currently pay via <strong>{activeGateway}</strong>
+        </div>
+        <div className="three-col">
+          <Field label="Gateway priority">
+            <Select value={draft.payment_gateway || "auto"} onChange={(event) => setDraft({ ...draft, payment_gateway: event.target.value })}>
+              <option value="auto">Auto — first one connected</option>
+              <option value="payu">PayU</option>
+              <option value="razorpay">Razorpay</option>
+              <option value="stripe">Stripe</option>
+              <option value="link">Payment link / UPI only</option>
+              <option value="manual">Manual verification only</option>
+            </Select>
+          </Field>
+          <Field label="Currency code">
+            <Input value={draft.currency || "INR"} onChange={(event) => setDraft({ ...draft, currency: event.target.value.toUpperCase() })} maxLength={3} />
+          </Field>
+          <Field label="Currency symbol">
+            <Input value={draft.currency_symbol || "₹"} onChange={(event) => setDraft({ ...draft, currency_symbol: event.target.value })} maxLength={4} />
+          </Field>
+        </div>
+        {testState ? (
+          <div className="gateway-test">
+            {Object.entries(testState.gateways || {}).map(([id, result]) => (
+              <div key={id} className={`gateway-test-row ${result.ok ? "good" : "warn"}`}>
+                <strong>{id}</strong>
+                <span>{result.message}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <p className="field-hint">
+          Save first, then test. If a gateway is down or a key is wrong, checkout automatically falls back to
+          your payment link or UPI so no order is ever lost.
         </p>
       </SectionCard>
     </div>

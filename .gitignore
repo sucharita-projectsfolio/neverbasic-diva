@@ -3,6 +3,7 @@ dist/
 .wrangler/
 *.log
 .DS_Store
+.dev.vars
 
 # Local Netlify folder
 .netlify

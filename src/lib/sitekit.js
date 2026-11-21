@@ -61,7 +61,123 @@ export const DEFAULT_THEME = {
   ogImage: "",
   customCss: "",
   showAnnouncement: true,
+  preset: "",
 };
+
+// One-click complete looks. Applying a preset sets shape + type + spacing + the
+// three brand colours; every value stays editable afterwards.
+export const THEME_PRESETS = [
+  {
+    id: "rose-editorial",
+    label: "Rose editorial",
+    hint: "The original — warm cream, muted rose, high-contrast serif",
+    accent: "#B0665A",
+    ink: "#241E1B",
+    bg: "#FAF6F0",
+    shape: "soft",
+    font: "editorial",
+    density: "cozy",
+  },
+  {
+    id: "noir-femme",
+    label: "Noir femme",
+    hint: "Near-black canvas, warm ivory type, wine accent",
+    accent: "#C2554F",
+    ink: "#F4EDE4",
+    bg: "#14100F",
+    shape: "sharp",
+    font: "editorial",
+    density: "cozy",
+  },
+  {
+    id: "neon-diva",
+    label: "Neon diva",
+    hint: "Electric lime on charcoal, hard edges, mono headlines",
+    accent: "#C6F24E",
+    ink: "#F5F5F0",
+    bg: "#111312",
+    shape: "brutal",
+    font: "mono",
+    density: "compact",
+  },
+  {
+    id: "cream-minimal",
+    label: "Cream minimal",
+    hint: "Bone white, black type, one quiet accent",
+    accent: "#8C3B2E",
+    ink: "#1B1A18",
+    bg: "#FBF9F4",
+    shape: "sharp",
+    font: "modern",
+    density: "airy",
+  },
+  {
+    id: "emerald-luxe",
+    label: "Emerald luxe",
+    hint: "Deep forest, soft gold, arch shapes",
+    accent: "#C9A227",
+    ink: "#F7F3E8",
+    bg: "#0E2A22",
+    shape: "arch",
+    font: "classic",
+    density: "airy",
+  },
+  {
+    id: "midnight-gold",
+    label: "Midnight gold",
+    hint: "Navy night, champagne accents, pill buttons",
+    accent: "#E4B363",
+    ink: "#F3EFE6",
+    bg: "#0F1729",
+    shape: "pill",
+    font: "editorial",
+    density: "cozy",
+  },
+  {
+    id: "blush-pastel",
+    label: "Blush pastel",
+    hint: "Soft pink, plum ink, very round and friendly",
+    accent: "#C2185B",
+    ink: "#3A2430",
+    bg: "#FDF0F4",
+    shape: "pill",
+    font: "modern",
+    density: "airy",
+  },
+  {
+    id: "brutal-pop",
+    label: "Brutal pop",
+    hint: "Acid yellow, black type, zero radius",
+    accent: "#FFD400",
+    ink: "#0B0B0B",
+    bg: "#F5F1E6",
+    shape: "brutal",
+    font: "mono",
+    density: "compact",
+  },
+  {
+    id: "terracotta-sun",
+    label: "Terracotta sun",
+    hint: "Clay, oat and olive — slow-living editorial",
+    accent: "#A34A28",
+    ink: "#2C2620",
+    bg: "#F6EFE4",
+    shape: "arch",
+    font: "classic",
+    density: "cozy",
+  },
+  {
+    id: "slate-studio",
+    label: "Slate studio",
+    hint: "Cool grey, cobalt accent, clean sans everywhere",
+    accent: "#2F5BEA",
+    ink: "#12161F",
+    bg: "#F3F5F9",
+    shape: "soft",
+    font: "modern",
+    density: "compact",
+  },
+];
 
 /* --------------------------------- copy ---------------------------------- */
 
@@ -512,6 +628,182 @@ export const BLOCK_TYPES = [
       text("ctaLabel", "Link text"),
     ],
   },
+  {
+    type: "ticker",
+    label: "Ticker strip",
+    glyph: "⇢",
+    hint: "A moving strip of short benefits or proof lines.",
+    defaults: {
+      items: ["instant delivery", "one-time price", "100% refund promise", "no subscription"],
+      speed: "normal",
+      tone: "ink",
+    },
+    fields: [
+      { key: "items", label: "Lines", type: "lines", hint: "One short phrase per line." },
+      select("speed", "Speed", [
+        ["slow", "Slow"],
+        ["normal", "Normal"],
+        ["fast", "Fast"],
+      ]),
+      select("tone", "Tone", [
+        ["ink", "Ink strip"],
+        ["accent", "Accent strip"],
+        ["outline", "Outlined"],
+      ]),
+    ],
+  },
+  {
+    type: "countdown",
+    label: "Offer countdown",
+    glyph: "◷",
+    hint: "A deadline band. Uses the countdown date from Look → announcement.",
+    defaults: {
+      eyebrow: "limited window",
+      title: "This price is *not forever.*",
+      sub: "Once the clock runs out the price goes back up. No extensions, no midnight emails.",
+      ctaLabel: "See the library",
+      ctaLink: "/ebooks",
+    },
+    fields: [
+      text("eyebrow", "Eyebrow"),
+      text("title", "Heading"),
+      area("sub", "Paragraph"),
+      text("ctaLabel", "Button text"),
+      link("ctaLink", "Button link"),
+    ],
+  },
+  {
+    type: "newsletter",
+    label: "Email capture",
+    glyph: "✉",
+    hint: "Collect subscribers. They land in Admin → Growth.",
+    defaults: {
+      eyebrow: "the quiet list",
+      title: "One letter. *One useful idea.*",
+      sub: "New ebooks and the unspoken notes before they go public. No noise, unsubscribe in one click.",
+      button: "Join the list",
+      placeholder: "you@email.com",
+    },
+    fields: [
+      text("eyebrow", "Eyebrow"),
+      text("title", "Heading"),
+      area("sub", "Paragraph"),
+      text("button", "Button text"),
+      text("placeholder", "Input placeholder"),
+    ],
+  },
+  {
+    type: "bundles",
+    label: "Bundle offers",
+    glyph: "▣",
+    hint: "Live bundles built in Admin → Growth.",
+    defaults: {
+      eyebrow: "stack and save",
+      title: "Buy the *set*, not the single.",
+      sub: "Hand-picked combinations at a price that makes the single look silly.",
+      ctaLabel: "Browse every bundle",
+    },
+    fields: [text("eyebrow", "Eyebrow"), text("title", "Heading"), area("sub", "Paragraph"), text("ctaLabel", "Link text")],
+  },
+  {
+    type: "journal",
+    label: "Journal / blog",
+    glyph: "✎",
+    hint: "Latest published posts from Admin → Journal.",
+    defaults: {
+      eyebrow: "the journal",
+      title: "Notes worth *stealing.*",
+      sub: "Short essays on money, rooms and self-respect — the same voice as the ebooks.",
+      limit: 3,
+      ctaLabel: "Read the journal",
+    },
+    fields: [
+      text("eyebrow", "Eyebrow"),
+      text("title", "Heading"),
+      area("sub", "Paragraph"),
+      { key: "limit", label: "Max posts", type: "number" },
+      text("ctaLabel", "Link text"),
+    ],
+  },
+  {
+    type: "split",
+    label: "Image + text split",
+    glyph: "◧",
+    hint: "A tall image beside a short story and a button.",
+    defaults: {
+      eyebrow: "why this exists",
+      title: "Written for the woman who is *done waiting.*",
+      body: "Every ebook is short on purpose. You should be able to finish it on a commute and use one line before the day ends.\n\nNo padding. No recycled motivation. Just the specific part nobody says out loud.",
+      image: "",
+      imageSide: "left",
+      items: ["Read in one sitting", "Use it the same day", "Yours forever"],
+      ctaLabel: "Open the library",
+      ctaLink: "/ebooks",
+    },
+    fields: [
+      text("eyebrow", "Eyebrow"),
+      text("title", "Heading"),
+      { key: "body", label: "Body", type: "textarea", hint: "Blank line = new paragraph." },
+      image("image", "Image"),
+      select("imageSide", "Image side", [
+        ["left", "Left"],
+        ["right", "Right"],
+      ]),
+      { key: "items", label: "Bullet points", type: "lines" },
+      text("ctaLabel", "Button text"),
+      link("ctaLink", "Button link"),
+    ],
+  },
+  {
+    type: "proof",
+    label: "Verified reviews",
+    glyph: "✓",
+    hint: "Real reviews from paid orders, approved in admin.",
+    defaults: {
+      eyebrow: "verified buyers",
+      title: "Real people, *real receipts.*",
+      sub: "Only buyers with a paid order can leave one of these.",
+      limit: 6,
+    },
+    fields: [text("eyebrow", "Eyebrow"), text("title", "Heading"), area("sub", "Paragraph"), { key: "limit", label: "Max reviews", type: "number" }],
+  },
+  {
+    type: "whatsapp",
+    label: "WhatsApp band",
+    glyph: "☎",
+    hint: "A direct message band. Hidden when no number is set.",
+    defaults: {
+      eyebrow: "questions first?",
+      title: "Message a human, not a *bot.*",
+      sub: "Send one line about what you want to fix. You'll get a real answer, usually the same day.",
+      button: "Chat on WhatsApp",
+    },
+    fields: [text("eyebrow", "Eyebrow"), text("title", "Heading"), area("sub", "Paragraph"), text("button", "Button text")],
+  },
+];
+
+// Feature labels used by Admin → Growth.
+export const FEATURE_LABELS = [
+  ["search", "Live search", "Search bar and /search page with instant filtering."],
+  ["wishlist", "Wishlist", "Hearts on every cover plus a saved list page."],
+  ["recent", "Recently viewed", "A quiet row of the books this visitor opened."],
+  ["coupons", "Coupon codes", "Discount codes validated on the server at checkout."],
+  ["bundles", "Bundles", "Multi-ebook offers at a set price."],
+  ["samples", "Free samples", "A read-a-sample panel on every product page."],
+  ["reviews", "Verified reviews", "Paid buyers can leave reviews; you approve them."],
+  ["journal", "Journal / blog", "Public posts at /journal for search traffic."],
+  ["newsletter", "Newsletter", "Footer + section capture, list and CSV export."],
+  ["assistant", "AI shop assistant", "A chat widget that answers from your catalogue."],
+  ["whatsappFloat", "WhatsApp button", "Floating chat button using the number in Site content."],
+  ["socialProof", "Social proof toasts", "Recent real purchases shown quietly."],
+  ["exitIntent", "Exit-offer popup", "One last coupon offer when a visitor moves to leave."],
+  ["countdown", "Offer countdown", "Countdown clock in the announcement and countdown section."],
+  ["share", "Share buttons", "WhatsApp + copy-link sharing on product pages."],
+  ["receipts", "PDF receipts", "Paid buyers can download a receipt."],
+  ["stickyBuy", "Sticky buy bar", "Price and buy button that follows the scroll."],
+  ["trustBadges", "Trust badges", "Refund / no-subscription / licence reassurance."],
+  ["upsell", "Order upsell", "Suggests the next ebook after a paid order."],
+  ["orderTrack", "Order tracking", "The /track lookup page."],
 ];
 
 export const BLOCK_MAP = Object.fromEntries(BLOCK_TYPES.map((entry) => [entry.type, entry]));
@@ -580,10 +872,13 @@ function asObject(value) {
 // Reads the three builder settings out of a site/admin payload, falling back to
 // the defaults above for anything that has not been saved yet.
 export function readKit(source = {}) {
-  const settings = source.settings || {};
-  const savedBlocks = asArray(source.blocks) || asArray(settings.site_blocks);
-  const savedContent = asObject(source.content) || asObject(settings.site_content) || {};
-  const savedTheme = asObject(source.theme) || asObject(settings.site_theme) || {};
+  // The site payload is null on the very first render (before /api/site lands), so
+  // every read must tolerate null instead of assuming an object.
+  const safe = source && typeof source === "object" ? source : {};
+  const settings = safe.settings || {};
+  const savedBlocks = asArray(safe.blocks) || asArray(settings.site_blocks);
+  const savedContent = asObject(safe.content) || asObject(settings.site_content) || {};
+  const savedTheme = asObject(safe.theme) || asObject(settings.site_theme) || {};
 
   const blocks = (savedBlocks && savedBlocks.length ? savedBlocks : DEFAULT_BLOCKS).map((block, index) => ({
     hidden: false,

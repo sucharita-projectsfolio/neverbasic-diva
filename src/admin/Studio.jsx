@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api.jsx";
 import { Button, Field, Input, Select, Textarea, Toggle, useToast } from "../ui.jsx";
 import {
@@ -10,6 +10,7 @@ import {
   DEFAULT_THEME,
   FONTS,
   SHAPES,
+  THEME_PRESETS,
   blockLabel,
   newBlock,
   readKit,
@@ -231,7 +232,26 @@ function FieldInput({ field, value, onChange }) {
 /* -------------------------------- sections ------------------------------- */
 
 function SectionsTab({ blocks, setBlocks, openId, setOpenId }) {
+  const toast = useToast();
   const [palette, setPalette] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState("");
+
+  async function rewrite(block) {
+    setAiBusy(block.id);
+    try {
+      const result = await api("/api/admin/ai/rewrite", {
+        method: "POST",
+        body: { block, instruction: aiText },
+      });
+      setBlocks((list) => list.map((row) => (row.id === block.id ? { ...row, ...result.patch } : row)));
+      toast(`Rewritten with ${result.meta.provider}`);
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setAiBusy("");
+    }
+  }
 
   const move = (index, delta) => {
     const next = [...blocks];
@@ -361,6 +381,16 @@ function SectionsTab({ blocks, setBlocks, openId, setOpenId }) {
                         onChange={(next) => update(block.id, { [field.key]: next })}
                       />
                     ))}
+                    <div className="block-ai-row">
+                      <Input
+                        value={aiText}
+                        onChange={(event) => setAiText(event.target.value)}
+                        placeholder="AI instruction — e.g. make it shorter, more expensive, less salesy…"
+                      />
+                      <Button size="sm" variant="secondary" type="button" loading={aiBusy === block.id} onClick={() => rewrite(block)}>
+                        ✷ AI rewrite
+                      </Button>
+                    </div>
                     <div className="block-body-foot">
                       <Button
                         size="sm"
@@ -417,6 +447,56 @@ function CopyTab({ content, setContent }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/* --------------------------------- themes -------------------------------- */
+
+function ThemesTab({ theme, setTheme, colors, setColors }) {
+  return (
+    <div className="stack-lg">
+      <section className="admin-card">
+        <div className="admin-card-head">
+          <div>
+            <h3>Complete looks</h3>
+            <p>One click sets the palette, shapes, type and spacing. Then tune anything in Look.</p>
+          </div>
+        </div>
+        <div className="theme-preset-grid">
+          {THEME_PRESETS.map((preset) => {
+            const active = theme.preset === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`theme-preset${active ? " active" : ""}`}
+                onClick={() => {
+                  setTheme({ ...theme, shape: preset.shape, font: preset.font, density: preset.density, preset: preset.id });
+                  setColors({ accent_color: preset.accent, ink_color: preset.ink, bg_color: preset.bg });
+                }}
+              >
+                <span
+                  className="preset-swatch"
+                  style={{ background: preset.bg, color: preset.ink, borderColor: preset.accent }}
+                >
+                  <em style={{ color: preset.accent }}>Aa</em>
+                  <strong>Aa</strong>
+                  <i style={{ background: preset.accent }} />
+                  <i style={{ background: preset.ink, opacity: 0.35 }} />
+                </span>
+                <strong>{preset.label}</strong>
+                <small>{preset.hint}</small>
+                <span className="preset-colors">
+                  <i style={{ background: preset.accent }} />
+                  <i style={{ background: preset.ink }} />
+                  <i style={{ background: preset.bg }} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -532,14 +612,54 @@ function LookTab({ theme, setTheme, colors, setColors }) {
 
 /* -------------------------------- advanced -------------------------------- */
 
-function AdvancedTab({ theme, setTheme }) {
+function AdvancedTab({ theme, setTheme, blocks, content, colors }) {
+  const toast = useToast();
+  const [importText, setImportText] = useState("");
+
+  function downloadLayout() {
+    const blob = new Blob([JSON.stringify({ blocks, content, theme, colors }, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "neverbasic-diva-layout.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  function importLayout() {
+    try {
+      const parsed = JSON.parse(importText);
+      if (!parsed || typeof parsed !== "object") throw new Error("bad file");
+      const confirmed = window.confirm("Replace the current sections, copy and look with this file?");
+      if (!confirmed) return;
+      const kit = { blocks: parsed.blocks, content: parsed.content, theme: parsed.theme, colors: parsed.colors };
+      window.dispatchEvent(new CustomEvent("nbd:studio-import", { detail: kit }));
+      toast("Layout loaded — review it, then publish");
+      setImportText("");
+    } catch {
+      toast("That is not a valid layout file.", "bad");
+    }
+  }
+
   return (
     <section className="admin-card">
       <div className="admin-card-head">
         <div>
           <h3>Advanced</h3>
-          <p>Search preview, social image and your own CSS.</p>
+          <p>Search preview, social image, your own CSS and layout backups.</p>
         </div>
+      </div>
+      <div className="two-col">
+        <Field label="Layout backup" hint="Download every section, text overrides and look settings as a file.">
+          <Button size="sm" variant="secondary" type="button" onClick={downloadLayout}>
+            Download layout JSON
+          </Button>
+        </Field>
+        <Field label="Restore a layout" hint="Paste a layout file you downloaded earlier.">
+          <Textarea rows={4} className="mono" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder='{"blocks":[…]}' />
+          <Button size="sm" variant="ghost" type="button" onClick={importLayout} disabled={!importText.trim()}>
+            Load layout
+          </Button>
+        </Field>
       </div>
       <Field label="Browser / search title" hint="Defaults to brand name + tagline.">
         <Input value={theme.seoTitle || ""} onChange={(event) => setTheme({ ...theme, seoTitle: event.target.value })} />
@@ -565,6 +685,118 @@ function AdvancedTab({ theme, setTheme }) {
   );
 }
 
+/* ------------------------------ live preview ------------------------------ */
+
+// Renders the real storefront in a frame beside the editor. Every keystroke is
+// pushed into the frame as an unsaved draft, so nothing has to be published to
+// see the result — and what you see is the actual page, not a mock-up.
+function StudioPreview({ blocks, content, theme, colors, open, onToggle }) {
+  const frameRef = useRef(null);
+  const stageRef = useRef(null);
+  const [device, setDevice] = useState("desktop");
+  const [scale, setScale] = useState(0.4);
+  const [stageHeight, setStageHeight] = useState(520);
+  const [ready, setReady] = useState(false);
+
+  const kit = useMemo(() => ({ blocks, content, theme, colors }), [blocks, content, theme, colors]);
+
+  const send = useCallback(() => {
+    const frame = frameRef.current;
+    if (!frame || !frame.contentWindow) return;
+    frame.contentWindow.postMessage({ type: "nbd:studio-draft", kit }, window.location.origin);
+  }, [kit]);
+
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || event.data.type !== "nbd:studio-ready") return;
+      setReady(true);
+      send();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [send]);
+
+  useEffect(() => {
+    if (ready) send();
+  }, [ready, send]);
+
+  // Desktop previews render at 1280px and are scaled to fit the panel, so the
+  // admin sees the real desktop layout instead of the tablet breakpoint.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !open) return undefined;
+    const measure = () => {
+      const width = stage.clientWidth || 420;
+      if (device === "phone") {
+        setScale(1);
+        setStageHeight(Math.round(Math.min(720, Math.max(480, window.innerHeight * 0.72))));
+      } else {
+        setScale(Math.max(0.2, Math.min(1, width / 1280)));
+        setStageHeight(Math.round(Math.min(780, Math.max(430, width * 1.3))));
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return () => {};
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [device, open]);
+
+  if (!open) {
+    return (
+      <aside className="studio-preview collapsed">
+        <button type="button" className="studio-preview-tab" onClick={onToggle}>
+          ▸ Live preview
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="studio-preview">
+      <div className="studio-preview-head">
+        <div className="studio-preview-title">
+          <strong>Live preview</strong>
+          <small>{device === "phone" ? "Phone" : "Desktop"} · updates as you type</small>
+        </div>
+        <div className="studio-preview-tools">
+          <button type="button" className={device === "desktop" ? "on" : ""} onClick={() => setDevice("desktop")}>
+            ▭
+          </button>
+          <button type="button" className={device === "phone" ? "on" : ""} onClick={() => setDevice("phone")}>
+            ▯
+          </button>
+          <a href="/" target="_blank" rel="noreferrer" title="Open the storefront in a new tab">
+            ↗
+          </a>
+          <button type="button" onClick={onToggle} title="Hide live preview">
+            ×
+          </button>
+        </div>
+      </div>
+      <div className={`studio-preview-stage ${device}`} ref={stageRef} style={{ height: stageHeight }}>
+        <iframe
+          ref={frameRef}
+          className={`studio-frame ${device}`}
+          title="Store live preview"
+          src="/"
+          style={
+            device === "desktop"
+              ? { width: 1280, height: Math.round(stageHeight / scale), transform: `scale(${scale})` }
+              : { width: 390, height: "100%" }
+          }
+          onLoad={() => {
+            setReady(true);
+            send();
+          }}
+        />
+      </div>
+      <p className="studio-preview-note">Scroll inside the frame. Nothing is public until you press Publish.</p>
+    </aside>
+  );
+}
+
 /* --------------------------------- studio -------------------------------- */
 
 export default function Studio({ settings, reload }) {
@@ -582,6 +814,7 @@ export default function Studio({ settings, reload }) {
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [signature, setSignature] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(true);
 
   // Re-sync after a save/reload, but never while the admin has unsaved edits.
   const currentSignature = useMemo(
@@ -602,6 +835,19 @@ export default function Studio({ settings, reload }) {
   }, [baseSignature, signature]);
 
   const dirty = currentSignature !== (signature || baseSignature);
+
+  // Layout restore from Advanced arrives as an event so it reuses the same state.
+  useEffect(() => {
+    const onImport = (event) => {
+      const detail = event.detail || {};
+      if (Array.isArray(detail.blocks)) setBlocks(detail.blocks);
+      if (detail.content && typeof detail.content === "object") setContent({ ...DEFAULT_CONTENT, ...detail.content });
+      if (detail.theme && typeof detail.theme === "object") setTheme({ ...DEFAULT_THEME, ...detail.theme });
+      if (detail.colors && typeof detail.colors === "object") setColors({ ...colors, ...detail.colors });
+    };
+    window.addEventListener("nbd:studio-import", onImport);
+    return () => window.removeEventListener("nbd:studio-import", onImport);
+  }, [colors]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -625,12 +871,25 @@ export default function Studio({ settings, reload }) {
     }
   }, [blocks, content, theme, colors, currentSignature, reload, toast]);
 
+  useEffect(() => {
+    const onKey = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (dirty) save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dirty, save]);
+
   return (
-    <div className="studio">
-      <div className="studio-bar">
+    <div className={`studio${previewOpen ? " has-preview" : ""}`}>
+      <div className="studio-main">
+        <div className="studio-bar">
         <div className="studio-tabs">
           {[
             ["sections", "Sections"],
+            ["themes", "Themes"],
             ["copy", "Text & copy"],
             ["look", "Look & shapes"],
             ["advanced", "Advanced"],
@@ -652,9 +911,22 @@ export default function Studio({ settings, reload }) {
       </div>
 
       {tab === "sections" ? <SectionsTab blocks={blocks} setBlocks={setBlocks} openId={openId} setOpenId={setOpenId} /> : null}
+      {tab === "themes" ? <ThemesTab theme={theme} setTheme={setTheme} colors={colors} setColors={setColors} /> : null}
       {tab === "copy" ? <CopyTab content={content} setContent={setContent} /> : null}
       {tab === "look" ? <LookTab theme={theme} setTheme={setTheme} colors={colors} setColors={setColors} /> : null}
-      {tab === "advanced" ? <AdvancedTab theme={theme} setTheme={setTheme} /> : null}
+        {tab === "advanced" ? (
+          <AdvancedTab theme={theme} setTheme={setTheme} blocks={blocks} content={content} colors={colors} />
+        ) : null}
+      </div>
+
+      <StudioPreview
+        blocks={blocks}
+        content={content}
+        theme={theme}
+        colors={colors}
+        open={previewOpen}
+        onToggle={() => setPreviewOpen((value) => !value)}
+      />
     </div>
   );
 }

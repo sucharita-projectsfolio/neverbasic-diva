@@ -1,7 +1,7 @@
-import React from "react";
-import { Link, money, useSite } from "../lib/api.jsx";
+import React, { useEffect, useState } from "react";
+import { Link, api, money, useSite } from "../lib/api.jsx";
 import { Cover, Reveal, Stars, Faq, Chip } from "../ui.jsx";
-import { fillTokens } from "../lib/sitekit.js";
+import { fillTokens, readKit } from "../lib/sitekit.js";
 import EbookCard from "./EbookCard.jsx";
 
 /* --------------------------------- text ---------------------------------- */
@@ -563,6 +563,280 @@ function Gallery({ block, site, tokens }) {
   );
 }
 
+/* ------------------------------ new blocks ------------------------------- */
+
+function Ticker({ block }) {
+  const items = (Array.isArray(block.items) ? block.items : []).filter(Boolean);
+  if (!items.length) return null;
+  const tone = block.tone || "ink";
+  return (
+    <div className={`ticker ticker-${tone} ticker-${block.speed || "normal"}`} aria-hidden="true">
+      <div className="ticker-track">
+        {items.map((item, index) => (
+          <React.Fragment key={index}>
+            <span>{item}</span>
+            <em>✿</em>
+          </React.Fragment>
+        ))}
+        {items.map((item, index) => (
+          <React.Fragment key={`dup-${index}`}>
+            <span>{item}</span>
+            <em>✿</em>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Countdown({ block, site, tokens }) {
+  const { theme } = readKit(site);
+  const endsAt = theme.offerEndsAt;
+  const [left, setLeft] = useState(() => (endsAt ? new Date(endsAt).getTime() - Date.now() : 0));
+  useEffect(() => {
+    if (!endsAt) return undefined;
+    const tick = () => setLeft(new Date(endsAt).getTime() - Date.now());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [endsAt]);
+  if (!endsAt || left <= 0) return null;
+  const days = Math.floor(left / 864e5);
+  const hours = Math.floor((left % 864e5) / 36e5);
+  const minutes = Math.floor((left % 36e5) / 6e4);
+  const seconds = Math.floor((left % 6e4) / 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    <section className="section block-countdown">
+      <div className="wrap">
+        <div className="countdown-card">
+          <div>
+            {block.eyebrow ? <span className="eyebrow"><Rich text={block.eyebrow} tokens={tokens} /></span> : null}
+            <h2><Rich text={block.title} tokens={tokens} /></h2>
+            {block.sub ? <p className="section-sub">{fillTokens(block.sub, tokens)}</p> : null}
+          </div>
+          <div className="countdown-clock" role="timer">
+            {days ? <span><strong>{days}</strong><small>days</small></span> : null}
+            <span><strong>{pad(hours)}</strong><small>hrs</small></span>
+            <span><strong>{pad(minutes)}</strong><small>min</small></span>
+            <span><strong>{pad(seconds)}</strong><small>sec</small></span>
+          </div>
+          {block.ctaLabel ? (
+            <Link to={block.ctaLink || "/ebooks"} className="btn btn-primary">
+              {block.ctaLabel}
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function NewsletterBlock({ block, tokens }) {
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState("idle");
+  const [note, setNote] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setState("busy");
+    try {
+      await api("/api/newsletter", { method: "POST", body: { email, source: "section" } });
+      setState("done");
+      setNote("You're on the list. Check your inbox for the first note.");
+    } catch (error) {
+      setState("error");
+      setNote(error.message);
+    }
+  }
+
+  return (
+    <section className="section block-newsletter">
+      <div className="wrap">
+        <div className="newsletter-card">
+          <div>
+            {block.eyebrow ? <span className="eyebrow"><Rich text={block.eyebrow} tokens={tokens} /></span> : null}
+            <h2><Rich text={block.title} tokens={tokens} /></h2>
+            {block.sub ? <p>{fillTokens(block.sub, tokens)}</p> : null}
+          </div>
+          <form onSubmit={submit} className="newsletter-form">
+            <input
+              type="email"
+              required
+              className="input"
+              placeholder={block.placeholder || "you@email.com"}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <button type="submit" className="btn btn-primary" disabled={state === "busy"}>
+              {state === "busy" ? "Joining…" : state === "done" ? "Joined ✓" : block.button || "Join the list"}
+            </button>
+          </form>
+          {note ? <p className="newsletter-note">{note}</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Bundles({ block, site, tokens }) {
+  const bundles = site.bundles || [];
+  if (!bundles.length) return null;
+  return (
+    <section className="section block-bundles">
+      <div className="wrap">
+        <Head eyebrow={block.eyebrow} title={block.title} sub={block.sub} tokens={tokens} />
+        <div className="bundle-grid">
+          {bundles.map((bundle, index) => (
+            <Reveal key={bundle.id} delay={index * 60}>
+              <Link to={`/bundle/${bundle.slug}`} className="bundle-card">
+                <div className="bundle-covers">
+                  {bundle.items.slice(0, 3).map((book) => (
+                    <Cover key={book.id} ebook={book} />
+                  ))}
+                </div>
+                <div className="bundle-body">
+                  <span className="ebook-cat">{bundle.count} ebooks {bundle.badge ? `· ${bundle.badge}` : ""}</span>
+                  <h3>{bundle.title}</h3>
+                  <p>{bundle.subtitle}</p>
+                  <div className="ebook-foot">
+                    <span className="ebook-price">
+                      {money(bundle.price)}
+                      {bundle.mrp > bundle.price ? <s>{money(bundle.mrp)}</s> : null}
+                    </span>
+                    <span className="ebook-arrow">→</span>
+                  </div>
+                </div>
+              </Link>
+            </Reveal>
+          ))}
+        </div>
+        {block.ctaLabel ? (
+          <div className="gallery-actions">
+            <Link to="/ebooks" className="btn btn-ghost">{block.ctaLabel}</Link>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function Journal({ block, site, tokens }) {
+  const posts = (site.posts || []).slice(0, Number(block.limit) || 3);
+  if (!posts.length) return null;
+  return (
+    <section className="section block-journal">
+      <div className="wrap">
+        <Head eyebrow={block.eyebrow} title={block.title} sub={block.sub} tokens={tokens} />
+        <div className="journal-grid">
+          {posts.map((post, index) => (
+            <Reveal key={post.id} delay={index * 60}>
+              <Link to={`/journal/${post.slug}`} className="journal-card">
+                {post.cover ? <img src={post.cover} alt="" loading="lazy" /> : <span className="journal-glyph">✎</span>}
+                <div>
+                  <small>{post.published_at ? new Date(post.published_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "Note"}</small>
+                  <h3>{post.title}</h3>
+                  <p>{post.excerpt || String(post.body || "").slice(0, 130)}</p>
+                  <span className="journal-more">Read →</span>
+                </div>
+              </Link>
+            </Reveal>
+          ))}
+        </div>
+        {block.ctaLabel ? (
+          <div className="gallery-actions">
+            <Link to="/journal" className="btn btn-ghost">{block.ctaLabel}</Link>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function Split({ block, tokens }) {
+  return (
+    <section className={`section block-split split-${block.imageSide || "left"}`}>
+      <div className="wrap split-grid">
+        <div className="split-art">
+          {block.image ? <img src={block.image} alt="" loading="lazy" /> : <div className="split-art-fallback">✿</div>}
+        </div>
+        <div className="split-copy">
+          {block.eyebrow ? <span className="eyebrow"><Rich text={block.eyebrow} tokens={tokens} /></span> : null}
+          <h2><Rich text={block.title} tokens={tokens} /></h2>
+          {paragraphs(fillTokens(block.body, tokens)).map((part, index) => (
+            <p key={index}><Rich text={part} tokens={tokens} /></p>
+          ))}
+          {Array.isArray(block.items) && block.items.length ? (
+            <ul className="detail-inside">
+              {block.items.map((item, index) => (
+                <li key={index}><span className="tick">✦</span>{item}</li>
+              ))}
+            </ul>
+          ) : null}
+          {block.ctaLabel ? (
+            <Link to={block.ctaLink || "/ebooks"} className="btn btn-primary">{block.ctaLabel} →</Link>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Proof({ block, site, tokens }) {
+  const reviews = (site.reviews || []).slice(0, Number(block.limit) || 6);
+  if (!reviews.length) return null;
+  const titleFor = (id) => (site.ebooks || []).find((book) => book.id === id)?.title || "an ebook";
+  return (
+    <section className="section block-proof">
+      <div className="wrap">
+        <Head eyebrow={block.eyebrow} title={block.title} sub={block.sub} tokens={tokens} />
+        <div className="proof-grid">
+          {reviews.map((review, index) => (
+            <Reveal key={review.id} delay={index * 50} className="proof-card">
+              <div className="proof-head">
+                <span className="avatar">{String(review.name || "R").charAt(0).toUpperCase()}</span>
+                <div>
+                  <strong>{review.name}</strong>
+                  <small>verified buyer · {titleFor(review.ebook_id)}</small>
+                </div>
+                <Stars value={review.rating} />
+              </div>
+              <p>{review.body}</p>
+              <span className="verified-tag">✓ paid order</span>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WhatsappBlock({ block, site, tokens }) {
+  const number = site.whatsapp?.number || "";
+  if (!number) return null;
+  return (
+    <section className="section block-whatsapp">
+      <div className="wrap">
+        <div className="whatsapp-card">
+          <div>
+            {block.eyebrow ? <span className="eyebrow"><Rich text={block.eyebrow} tokens={tokens} /></span> : null}
+            <h2><Rich text={block.title} tokens={tokens} /></h2>
+            {block.sub ? <p>{fillTokens(block.sub, tokens)}</p> : null}
+          </div>
+          <a
+            className="btn btn-primary"
+            href={`https://wa.me/${number.replace(/[^\d]/g, "")}?text=${encodeURIComponent("Hi! I have a question about the ebooks.")}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {block.button || "Chat on WhatsApp"}
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ------------------------------- dispatcher ------------------------------- */
 
 const RENDERERS = {
@@ -579,6 +853,14 @@ const RENDERERS = {
   banner: Banner,
   text: TextBlock,
   gallery: Gallery,
+  ticker: Ticker,
+  countdown: Countdown,
+  newsletter: NewsletterBlock,
+  bundles: Bundles,
+  journal: Journal,
+  split: Split,
+  proof: Proof,
+  whatsapp: WhatsappBlock,
 };
 
 export function Block({ block, site, tokens }) {

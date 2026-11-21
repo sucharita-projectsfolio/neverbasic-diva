@@ -75,3 +75,28 @@
   from = "/admin"
   to = "/index.html"
   status = 200
+
+[[redirects]]
+  from = "/search"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/wishlist"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/journal"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/journal/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/bundle/*"
+  to = "/index.html"
+  status = 200

@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -93,6 +94,7 @@ const SiteContext = createContext(null);
 export function SiteProvider({ children }) {
   const [site, setSite] = useState(null);
   const [error, setError] = useState("");
+  const [draft, setDraft] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -108,12 +110,130 @@ export function SiteProvider({ children }) {
     load();
   }, [load]);
 
+  // Design-studio live preview: when the storefront runs inside the admin's
+  // preview frame, the builder pushes its unsaved layout here so edits appear
+  // instantly without publishing. A normal page never receives these messages.
+  useEffect(() => {
+    if (window.parent === window) return undefined;
+    const onMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.type !== "nbd:studio-draft") return;
+      setDraft(data.kit || null);
+    };
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage({ type: "nbd:studio-ready" }, window.location.origin);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  const liveSite = useMemo(() => {
+    if (!site || !draft) return site;
+    const colors = draft.colors || {};
+    return {
+      ...site,
+      settings: {
+        ...site.settings,
+        ...(colors.accent_color ? { accent_color: colors.accent_color } : {}),
+        ...(colors.ink_color ? { ink_color: colors.ink_color } : {}),
+        ...(colors.bg_color ? { bg_color: colors.bg_color } : {}),
+      },
+      blocks: Array.isArray(draft.blocks) ? draft.blocks : site.blocks,
+      content: draft.content && typeof draft.content === "object" ? draft.content : site.content,
+      theme: draft.theme && typeof draft.theme === "object" ? draft.theme : site.theme,
+    };
+  }, [site, draft]);
+
   return (
-    <SiteContext.Provider value={{ site, error, reload: load }}>{children}</SiteContext.Provider>
+    <SiteContext.Provider value={{ site: liveSite, error, reload: load }}>{children}</SiteContext.Provider>
   );
 }
 
 export const useSite = () => useContext(SiteContext);
+
+/* ------------------------- wishlist & recently viewed ---------------------- */
+
+const readJson = (key, fallback) => {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeJson = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage blocked */
+  }
+};
+
+const emit = (name) => window.dispatchEvent(new Event(name));
+
+export const wishlistIds = () => readJson("nbd:wishlist", []);
+
+export function toggleWishlist(id) {
+  if (!id) return false;
+  const current = wishlistIds();
+  const next = current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id].slice(-60);
+  writeJson("nbd:wishlist", next);
+  emit("nbd:wishlist");
+  return next.includes(id);
+}
+
+export function useWishlist() {
+  const [ids, setIds] = useState(() => wishlistIds());
+  useEffect(() => {
+    const sync = () => setIds(wishlistIds());
+    window.addEventListener("nbd:wishlist", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("nbd:wishlist", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+  return ids;
+}
+
+export const recentBooks = () => readJson("nbd:recent", []);
+
+export function trackRecent(ebook) {
+  if (!ebook || !ebook.id) return;
+  const entry = {
+    id: ebook.id,
+    slug: ebook.slug,
+    title: ebook.title,
+    subtitle: ebook.subtitle,
+    category: ebook.category,
+    pages: ebook.pages,
+    price: ebook.price,
+    cover: ebook.cover,
+  };
+  const next = [entry, ...recentBooks().filter((row) => row.id !== ebook.id)].slice(0, 8);
+  writeJson("nbd:recent", next);
+  emit("nbd:recent");
+}
+
+export function useRecent() {
+  const [books, setBooks] = useState(() => recentBooks());
+  useEffect(() => {
+    const sync = () => setBooks(recentBooks());
+    window.addEventListener("nbd:recent", sync);
+    return () => window.removeEventListener("nbd:recent", sync);
+  }, []);
+  return books;
+}
+
+export function useDebounced(value, ms = 180) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return debounced;
+}
 
 export function rememberOrder(ref, email) {
   try {

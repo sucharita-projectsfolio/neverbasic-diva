@@ -13,6 +13,7 @@ export default function Home() {
     price: Number(settings.resell_price) || 399,
     count: (site?.ebooks || []).length,
     year: new Date().getFullYear(),
+    refund_policy: settings.refund_policy || "",
   };
 
   return (

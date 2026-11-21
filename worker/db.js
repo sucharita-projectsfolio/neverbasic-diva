@@ -145,7 +145,73 @@ CREATE TABLE IF NOT EXISTS visits (
   count INTEGER DEFAULT 0,
   PRIMARY KEY (day, path)
 );
+CREATE TABLE IF NOT EXISTS coupons (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  kind TEXT DEFAULT 'percent',
+  value INTEGER DEFAULT 0,
+  min_amount INTEGER DEFAULT 0,
+  max_uses INTEGER DEFAULT 0,
+  used INTEGER DEFAULT 0,
+  expires_at TEXT DEFAULT '',
+  status TEXT DEFAULT 'active',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bundles (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  title TEXT NOT NULL,
+  subtitle TEXT DEFAULT '',
+  ebook_ids TEXT DEFAULT '[]',
+  price INTEGER DEFAULT 0,
+  mrp INTEGER DEFAULT 0,
+  badge TEXT DEFAULT '',
+  cover TEXT DEFAULT '',
+  status TEXT DEFAULT 'active',
+  sort INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS posts (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  excerpt TEXT DEFAULT '',
+  body TEXT DEFAULT '',
+  cover TEXT DEFAULT '',
+  status TEXT DEFAULT 'draft',
+  published_at TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS subscribers (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  source TEXT DEFAULT 'footer',
+  status TEXT DEFAULT 'active',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reviews (
+  id TEXT PRIMARY KEY,
+  ebook_id TEXT NOT NULL,
+  order_ref TEXT DEFAULT '',
+  name TEXT DEFAULT '',
+  email TEXT DEFAULT '',
+  rating INTEGER DEFAULT 5,
+  body TEXT DEFAULT '',
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY,
+  actor TEXT DEFAULT '',
+  action TEXT DEFAULT '',
+  detail TEXT DEFAULT '',
+  ip TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_orders_ref ON orders(ref);
+CREATE INDEX IF NOT EXISTS idx_reviews_ebook ON reviews(ebook_id);
+CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
+CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_events_ref ON order_events(order_ref);
 CREATE INDEX IF NOT EXISTS idx_ticket_messages ON ticket_messages(ticket_ref);
@@ -221,7 +287,45 @@ export const DEFAULT_SETTINGS = {
   site_blocks: "[]",
   site_content: "{}",
   site_theme: "{}",
+
+  // AI copy studio. Keys can live here (pasted in admin) or in GROQ_API_KEY /
+  // OPENROUTER_API_KEY environment variables on Netlify / Cloudflare.
+  ai_enabled: "1",
+  ai_tone: "sharp, warm, human and specific — direct-response copy without fake claims",
+  ai_config:
+    '{"temperature":0.85,"providers":[{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["deepseek/deepseek-chat-v3-0324:free","deepseek/deepseek-r1-0528:free","meta-llama/llama-3.3-70b-instruct:free","qwen/qwen3-235b-a22b:free","mistralai/mistral-small-3.2-24b-instruct:free","google/gemma-3-27b-it:free"]}]}',
+
+  // Storefront feature switches (JSON, edited in Studio → Growth).
+  store_features:
+    '{"search":true,"wishlist":true,"recent":true,"coupons":true,"bundles":true,"samples":true,"reviews":true,"journal":true,"newsletter":true,"assistant":true,"whatsappFloat":true,"socialProof":true,"exitIntent":true,"countdown":true,"share":true,"receipts":true,"stickyBuy":true,"trustBadges":true,"upsell":true,"orderTrack":true}',
+
+  // Payment gateways — every key is set from Admin → Payments, never from code.
+  payment_gateway: "auto",
+  currency: "INR",
+  currency_symbol: "₹",
+  razorpay_enabled: "0",
+  razorpay_key_id: "",
+  razorpay_key_secret: "",
+  stripe_enabled: "0",
+  stripe_publishable_key: "",
+  stripe_secret_key: "",
+  gateway_note: "",
+  newsletter_heading: "One letter. One useful idea. No noise.",
+  newsletter_note: "Get new ebooks and the unspoken notes before they go public. Unsubscribe in one click.",
+  whatsapp_note: "Questions before you buy? Message us — a human replies.",
+  exit_offer_heading: "Before you go — take 10% off",
+  exit_offer_note: "Use this code at checkout. It works once, and only for a while.",
+  exit_coupon_code: "",
 };
+
+// Columns added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS,
+// so every statement is applied inside a try/catch in init(). Postgres uses the
+// migration file in netlify/database/migrations instead.
+export const MIGRATION_ALTERS = [
+  "ALTER TABLE ebooks ADD COLUMN ai_meta TEXT DEFAULT '{}'",
+  "ALTER TABLE ebooks ADD COLUMN sample TEXT DEFAULT ''",
+  "ALTER TABLE ebooks ADD COLUMN tags TEXT DEFAULT '[]'",
+];
 
 const SEED_EBOOKS = [
   {
@@ -348,7 +452,31 @@ async function init(env) {
     await db.batch(ddl);
   }
 
+  if (MIGRATION_ALTERS.length) {
+    for (const statement of MIGRATION_ALTERS) {
+      try {
+        await db.prepare(statement).run();
+      } catch {
+        // Column already exists — normal on every boot after the first one.
+      }
+    }
+  }
+
   const existing = await db.prepare("SELECT COUNT(*) AS n FROM settings").first();
+  if (existing && existing.n) {
+    // New settings keys ship with later releases; add any missing ones without
+    // touching values the admin has already saved.
+    const existingKeys = await db.prepare("SELECT key FROM settings").all();
+    const known = new Set((existingKeys.results || []).map((row) => row.key));
+    const missing = Object.entries(DEFAULT_SETTINGS).filter(([key]) => !known.has(key));
+    if (missing.length) {
+      await db.batch(
+        missing.map(([key, value]) =>
+          db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING").bind(key, String(value))
+        )
+      );
+    }
+  }
   if (!existing || !existing.n) {
     const statements = Object.entries(DEFAULT_SETTINGS).map(([key, value]) =>
       db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING").bind(key, String(value))
@@ -401,6 +529,17 @@ async function init(env) {
           .bind(hex(8), t.name, t.handle, t.body, t.rating, i, now)
       )
     );
+  }
+
+  // Owner credentials from the environment: ADMIN_EMAIL + ADMIN_PASSWORD in
+  // .dev.vars locally and in the hosting dashboard for production. The password
+  // never lives in the repo. An admin with that email is never rewritten, so a
+  // password changed from the panel is not silently reset on the next restart.
+  const ownerEmail = String(env && env.ADMIN_EMAIL ? env.ADMIN_EMAIL : "").trim().toLowerCase();
+  const ownerPassword = String(env && env.ADMIN_PASSWORD ? env.ADMIN_PASSWORD : "");
+  if (ownerEmail && ownerPassword.length >= 8) {
+    const match = await db.prepare("SELECT id FROM admins WHERE LOWER(email) = ?").bind(ownerEmail).first();
+    if (!match) await createAdmin(db, ownerEmail, ownerPassword);
   }
 }
 

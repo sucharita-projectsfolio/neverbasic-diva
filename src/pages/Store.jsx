@@ -26,9 +26,10 @@ import {
   Textarea,
   useToast,
 } from "../ui.jsx";
-import EbookCard from "./EbookCard.jsx";
+import EbookCard, { WishButton } from "./EbookCard.jsx";
 import { readKit } from "../lib/sitekit.js";
 import { Rich } from "./blocks.jsx";
+import { ProductReviews, RecentlyViewed, ReviewForm, SampleModal, ShareRow, useTrackRecent } from "./Extras.jsx";
 
 export function Shop() {
   const { site } = useSite();
@@ -77,6 +78,7 @@ export function Shop() {
           <span>100% refund promise</span>
           <span>WhatsApp-ready support</span>
         </div>
+        <RecentlyViewed compact />
       </div>
     </div>
   );
@@ -86,6 +88,8 @@ export function EbookPage({ slug }) {
   const { site } = useSite();
   const ebook = (site.ebooks || []).find((book) => book.slug === slug);
   const others = (site.ebooks || []).filter((book) => book.slug !== slug).slice(0, 3);
+  const [sampleOpen, setSampleOpen] = useState(false);
+  useTrackRecent(ebook);
 
   if (!ebook) {
     return (
@@ -125,6 +129,7 @@ export function EbookPage({ slug }) {
               <span className="eyebrow">{ebook.category} · neverbasic diva</span>
               <h1>{ebook.title}</h1>
               <p className="detail-sub">{ebook.subtitle}</p>
+              <ShareRow ebook={ebook} />
             </Reveal>
             <Reveal delay={80} className="detail-price-row">
               <span className="detail-price">{money(ebook.price)}</span>
@@ -156,19 +161,29 @@ export function EbookPage({ slug }) {
                   <span className="buy-label">Instant download</span>
                   <strong>{money(ebook.price)}</strong>
                 </div>
-                <Link to={`/checkout/${ebook.id}`} className="btn btn-primary btn-lg">
-                  Get it now →
-                </Link>
+                <div className="buy-actions">
+                  <Link to={`/checkout/${ebook.id}`} className="btn btn-primary btn-lg">
+                    Get it now →
+                  </Link>
+                  {site.features?.samples ? (
+                    <button type="button" className="btn btn-ghost" onClick={() => setSampleOpen(true)}>
+                      Read a free sample
+                    </button>
+                  ) : null}
+                </div>
               </div>
               <p className="buy-fine">
                 Pay by UPI, card or netbanking. Your PDF unlocks immediately and stays on your order page
                 forever.
               </p>
-              <div className="buy-trust">
-                <span>✿ 100% refund promise</span>
-                <span>✿ No subscription</span>
-                <span>✿ Personal licence</span>
-              </div>
+              {site.features?.trustBadges !== false ? (
+                <div className="buy-trust">
+                  <span>✿ 100% refund promise</span>
+                  <span>✿ No subscription</span>
+                  <span>✿ Personal licence</span>
+                  <span>✿ Instant PDF</span>
+                </div>
+              ) : null}
             </Reveal>
             <Reveal delay={240} className="detail-after">
               <h3>What happens after you pay</h3>
@@ -185,6 +200,20 @@ export function EbookPage({ slug }) {
             </Reveal>
           </div>
         </div>
+
+        {site.features?.stickyBuy ? (
+          <div className="sticky-buy">
+            <div>
+              <strong>{ebook.title}</strong>
+              <small>{money(ebook.price)} · instant PDF</small>
+            </div>
+            <Link to={`/checkout/${ebook.id}`} className="btn btn-primary">
+              Buy now →
+            </Link>
+          </div>
+        ) : null}
+
+        <ProductReviews ebook={ebook} />
 
         {others.length ? (
           <section className="section related">
@@ -203,7 +232,10 @@ export function EbookPage({ slug }) {
             </div>
           </section>
         ) : null}
+
+        <RecentlyViewed excludeId={ebook.id} compact />
       </div>
+      <SampleModal ebook={ebook} open={sampleOpen} onClose={() => setSampleOpen(false)} />
     </div>
   );
 }
@@ -216,6 +248,9 @@ export function Checkout({ ebookId }) {
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [code, setCode] = useState("");
+  const [coupon, setCoupon] = useState(null);
+  const [codeBusy, setCodeBusy] = useState(false);
 
   useEffect(() => {
     try {
@@ -239,6 +274,22 @@ export function Checkout({ ebookId }) {
   }
 
   const payment = site.settings.payment || {};
+  const total = coupon ? coupon.total : ebook.price;
+
+  async function applyCode() {
+    if (!code.trim()) return;
+    setCodeBusy(true);
+    try {
+      const result = await api("/api/coupons/validate", { method: "POST", body: { code, amount: ebook.price } });
+      setCoupon(result);
+      toast(`${result.code} applied — ${result.label}`);
+    } catch (err) {
+      setCoupon(null);
+      toast(err.message, "bad");
+    } finally {
+      setCodeBusy(false);
+    }
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -252,7 +303,7 @@ export function Checkout({ ebookId }) {
       window.localStorage.setItem("nbd:buyer", JSON.stringify(form));
       const result = await api("/api/orders", {
         method: "POST",
-        body: { ...form, ebookId: ebook.id, kind: "ebook" },
+        body: { ...form, ebookId: ebook.id, kind: "ebook", code: coupon ? coupon.code : "" },
       });
       rememberOrder(result.ref, form.email);
       if (result.warning) toast(result.warning, "bad");
@@ -308,6 +359,20 @@ export function Checkout({ ebookId }) {
                 autoComplete="tel"
               />
             </Field>
+            {site.features?.coupons ? (
+              <div className="coupon-row">
+                <Input
+                  value={code}
+                  onChange={(event) => setCode(event.target.value.toUpperCase())}
+                  placeholder="Coupon code"
+                  aria-label="Coupon code"
+                />
+                <Button type="button" variant="secondary" onClick={applyCode} loading={codeBusy}>
+                  Apply
+                </Button>
+              </div>
+            ) : null}
+            {coupon ? <p className="field-hint">✓ {coupon.code} · {coupon.label}</p> : null}
             <label className="check-line">
               <input type="checkbox" checked={agree} onChange={(event) => setAgree(event.target.checked)} />
               <span>
@@ -317,7 +382,7 @@ export function Checkout({ ebookId }) {
             </label>
             {error ? <p className="form-error">{error}</p> : null}
             <Button type="submit" size="lg" loading={busy} className="btn-block">
-              Pay {money(ebook.price)} securely →
+              Pay {money(total)} securely →
             </Button>
             <p className="check-fine">
               {payment.payu
@@ -344,9 +409,15 @@ export function Checkout({ ebookId }) {
             <span>Delivery</span>
             <span>Instant · free</span>
           </div>
+          {coupon ? (
+            <div className="summary-row">
+              <span>Coupon {coupon.code}</span>
+              <span>−{money(coupon.discount)}</span>
+            </div>
+          ) : null}
           <div className="summary-total">
             <span>Total</span>
-            <strong>{money(ebook.price)}</strong>
+            <strong>{money(total)}</strong>
           </div>
           <div className="summary-perks">
             <span>✿ Yours forever</span>
@@ -360,6 +431,7 @@ export function Checkout({ ebookId }) {
 }
 
 export function OrderPage({ reference }) {
+  const { site } = useSite();
   const path = usePath();
   const toast = useToast();
   const [email, setEmail] = useState("");
@@ -488,6 +560,11 @@ export function OrderPage({ reference }) {
           <p className="muted">
             Placed {prettyDateTime(order.created_at)} · {money(order.amount)}
           </p>
+          {order.discount ? (
+            <p className="field-hint">
+              Coupon {order.couponCode} saved {money(order.discount)}
+            </p>
+          ) : null}
         </div>
         <StatusPill status={order.status} />
       </div>
@@ -500,9 +577,25 @@ export function OrderPage({ reference }) {
               <p className="muted">
                 Yours forever. Re-download any time from this page — the link stays live.
               </p>
-              <a className="btn btn-primary btn-lg btn-block" href={order.downloadUrl}>
-                Download PDF ↓
-              </a>
+              {order.items?.length ? (
+                <div className="download-list">
+                  {order.items.map((item) => (
+                    <a key={item.id} className="download-row" href={item.downloadUrl}>
+                      <span>{item.title}</span>
+                      <strong>Download PDF ↓</strong>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <a className="btn btn-primary btn-lg btn-block" href={order.downloadUrl}>
+                  Download PDF ↓
+                </a>
+              )}
+              {order.receiptUrl ? (
+                <a className="btn btn-ghost btn-sm" href={order.receiptUrl}>
+                  Download receipt
+                </a>
+              ) : null}
               <p className="field-hint">Downloaded {order.downloads} time(s) · {order.email}</p>
             </>
           ) : (
@@ -637,6 +730,43 @@ export function OrderPage({ reference }) {
           ))}
         </ul>
       </div>
+
+      {paid && order.canReview && site.features?.reviews ? (
+        <div className="panel">
+          <h3>Leave a verified review</h3>
+          <p className="muted">Only buyers of this order can review. It shows up once approved.</p>
+          {(order.items?.length ? order.items : data.ebook ? [{ id: data.ebook.id, title: data.ebook.title }] : []).map((item) => (
+            <ReviewForm
+              key={item.id}
+              ebookId={item.id}
+              ebookTitle={item.title}
+              orderRef={order.ref}
+              email={email}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {paid && site.features?.upsell ? (
+        <section className="order-upsell">
+          <div className="section-head">
+            <div>
+              <span className="eyebrow">stack the next one</span>
+              <h2>
+                One more that <em>compounds.</em>
+              </h2>
+            </div>
+          </div>
+          <div className="masonry">
+            {(site.ebooks || [])
+              .filter((book) => !(order.items || []).some((item) => item.id === book.id))
+              .slice(0, 3)
+              .map((book, index) => (
+                <EbookCard key={book.id} ebook={book} index={index} />
+              ))}
+          </div>
+        </section>
+      ) : null}
 
       <p className="order-foot">
         Keep this reference: <strong>{order.ref}</strong> · Look it up any time at{" "}

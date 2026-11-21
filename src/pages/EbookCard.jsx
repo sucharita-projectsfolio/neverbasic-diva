@@ -1,6 +1,28 @@
 import React from "react";
-import { Link, money } from "../lib/api.jsx";
+import { Link, money, toggleWishlist, useSite, useWishlist } from "../lib/api.jsx";
 import { Cover, Reveal } from "../ui.jsx";
+
+export function WishButton({ ebook, className = "" }) {
+  const { site } = useSite();
+  if (!site?.features?.wishlist) return null;
+  const ids = useWishlist();
+  const saved = ids.includes(ebook.id);
+  return (
+    <button
+      type="button"
+      className={`wish-btn${saved ? " saved" : ""} ${className}`.trim()}
+      aria-label={saved ? `Remove ${ebook.title} from wishlist` : `Save ${ebook.title} to wishlist`}
+      aria-pressed={saved}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWishlist(ebook.id);
+      }}
+    >
+      {saved ? "♥" : "♡"}
+    </button>
+  );
+}
 
 export default function EbookCard({ ebook, index = 0 }) {
   return (
@@ -29,6 +51,7 @@ export default function EbookCard({ ebook, index = 0 }) {
           </div>
         </div>
       </Link>
+      <WishButton ebook={ebook} className="on-card" />
     </Reveal>
   );
 }

@@ -2,6 +2,18 @@
 // Public storefront API + admin panel API, backed by D1 and R2.
 import { ensureReady, getSettings, setSetting, logEvent, createAdmin, DEFAULT_SETTINGS } from "./db.js";
 import * as U from "./util.js";
+import {
+  adminExtras,
+  adminRoute,
+  audit,
+  publicRoute,
+  rateLimit,
+  readFeatures,
+  resolvePurchase,
+  siteExtras,
+  validateCoupon,
+} from "./features.js";
+import { gatewayState, initiatePayment, retrieveStripeSession, verifyRazorpay, verifyStripeSignature, normaliseGatewaySettings } from "./payments.js";
 
 const ADMIN_COOKIE = "nbd_admin";
 const PUBLIC_KEYS = [
@@ -11,6 +23,8 @@ const PUBLIC_KEYS = [
   "resell_commission_note", "refund_window_days", "refund_policy", "terms", "license_terms",
   "privacy", "about", "faqs", "stats", "payu_mode",
   "site_blocks", "site_content", "site_theme",
+  "currency", "currency_symbol", "newsletter_heading", "newsletter_note", "whatsapp_note",
+  "exit_offer_heading", "exit_offer_note", "exit_coupon_code", "brand_name", "brand_tagline",
 ];
 
 // JSON settings edited by the design studio: [key, max serialised length, kind]
@@ -18,22 +32,80 @@ const JSON_SETTINGS = {
   site_blocks: { max: 200000, kind: "array" },
   site_content: { max: 80000, kind: "object" },
   site_theme: { max: 40000, kind: "object" },
+  ai_config: { max: 30000, kind: "object" },
+  store_features: { max: 20000, kind: "object" },
 };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith("/api/")) {
+      const response = await env.ASSETS.fetch(request);
+      return withSecurityHeaders(response);
+    }
 
     try {
       await ensureReady(env);
-      return await handleApi(request, env, url);
+      const blocked = guardRequest(request, url);
+      if (blocked) return withSecurityHeaders(blocked);
+      const response = await handleApi(request, env, url);
+      return withSecurityHeaders(response);
     } catch (error) {
       console.error("api_failure", url.pathname, error && error.stack ? error.stack : error);
-      return U.bad("Something went wrong on our side. Please try again.", 500);
+      const detail = env && env.DEBUG_ERRORS === "1" ? `: ${String((error && error.message) || error)}` : "";
+      return withSecurityHeaders(U.bad(`Something went wrong on our side. Please try again.${detail}`, 500));
     }
   },
 };
+
+/* ------------------------------- hardening -------------------------------- */
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com",
+  "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://checkout.stripe.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self' https://secure.payu.in https://test.payu.in https://checkout.stripe.com",
+].join("; ");
+
+function withSecurityHeaders(response) {
+  const out = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  out.headers.set("x-content-type-options", "nosniff");
+  out.headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  out.headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  out.headers.set("cross-origin-opener-policy", "same-origin-allow-popups");
+  if (!out.headers.has("content-security-policy")) out.headers.set("content-security-policy", CSP);
+  return out;
+}
+
+const CROSS_SITE_CALLBACKS = ["/api/payu/return", "/api/payu/webhook", "/api/stripe/webhook"];
+
+// CSRF guard: every state-changing request must come from our own origin (or from
+// a machine client with no Origin header, e.g. webhooks — those are signature
+// verified separately).
+function guardRequest(request, url) {
+  const method = request.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return null;
+  if (CROSS_SITE_CALLBACKS.includes(url.pathname)) return null;
+  const origin = request.headers.get("origin");
+  if (origin && origin !== url.origin) return U.bad("Cross-origin request blocked.", 403);
+  const contentType = request.headers.get("content-type") || "";
+  if (url.pathname.startsWith("/api/") && !contentType.includes("application/json") && !contentType.includes("multipart/form-data")) {
+    // Empty body POSTs (logout) are fine; anything else must be JSON or a form upload.
+    const length = Number(request.headers.get("content-length") || 0);
+    if (length > 0) return U.bad("Unsupported request format.", 415);
+  }
+  return null;
+}
 
 /* ------------------------------- routing --------------------------------- */
 
@@ -43,6 +115,9 @@ async function handleApi(request, env, url) {
   const db = env.DB;
 
   if (path === "/api/health") return U.json({ ok: true });
+
+  const featureResponse = await publicRoute(request, env, url);
+  if (featureResponse) return featureResponse;
 
   if (path === "/api/site" && method === "GET") return sitePayload(env);
   if (path === "/api/track" && method === "POST") return trackVisit(env, request);
@@ -56,10 +131,16 @@ async function handleApi(request, env, url) {
   if (m && method === "POST") return claimPayment(env, decodeURIComponent(m[1]), request);
 
   m = path.match(/^\/api\/download\/([^/]+)$/);
-  if (m && method === "GET") return deliverDownload(env, decodeURIComponent(m[1]));
+  if (m && method === "GET") return deliverDownload(env, decodeURIComponent(m[1]), url);
+
+  m = path.match(/^\/api\/receipt\/([^/]+)$/);
+  if (m && method === "GET") return orderReceipt(env, decodeURIComponent(m[1]), url);
 
   if (path === "/api/payu/return" && (method === "POST" || method === "GET")) return payuReturn(request, env);
   if (path === "/api/payu/webhook" && method === "POST") return payuReturn(request, env, true);
+  if (path === "/api/razorpay/verify" && method === "POST") return razorpayVerify(env, request);
+  if (path === "/api/stripe/return" && method === "GET") return stripeReturn(env, request, url);
+  if (path === "/api/stripe/webhook" && method === "POST") return stripeWebhook(env, request);
 
   m = path.match(/^\/api\/media\/(.+)$/);
   if (m && method === "GET") return serveMedia(env, decodeURIComponent(m[1]));
@@ -117,6 +198,7 @@ async function sitePayload(env) {
     link: (settings.payment_link || "").trim(),
     upi: (settings.upi_id || "").trim(),
   };
+  const extras = await siteExtras(env, settings);
   return U.json({
     settings: pub,
     blocks: safeJson(settings.site_blocks, []),
@@ -124,6 +206,7 @@ async function sitePayload(env) {
     theme: safeJson(settings.site_theme, {}),
     ebooks: (ebooks.results || []).map(publicEbook),
     testimonials: testimonials.results || [],
+    ...extras,
   });
 }
 
@@ -144,6 +227,8 @@ function publicEbook(row) {
     featured: row.featured,
     status: row.status,
     sort: row.sort,
+    sample: row.sample || "",
+    tags: safeJson(row.tags, []),
   };
 }
 
@@ -203,7 +288,7 @@ async function createOrder(env, request) {
   const db = env.DB;
   const body = await readJson(request);
   const settings = await getSettings(db);
-  const kind = body.kind === "resell" ? "resell" : "ebook";
+  const features = readFeatures(settings);
   const name = U.oneLine(body.name, 80);
   const email = U.clean(body.email, 160).toLowerCase();
   const phone = U.clean(body.phone, 20);
@@ -212,18 +297,18 @@ async function createOrder(env, request) {
   if (!U.isEmail(email)) return U.bad("Please add a valid email — your access is tied to it.");
   if (!/^[0-9+\-\s()]{6,20}$/.test(phone)) return U.bad("Please add a valid phone number.");
 
-  let ebook = null;
-  let amount = 0;
-  let itemTitle = "";
-  if (kind === "ebook") {
-    ebook = await db.prepare("SELECT * FROM ebooks WHERE id = ? AND status = 'active'").bind(U.clean(body.ebookId, 40)).first();
-    if (!ebook) return U.bad("That ebook is not available right now.");
-    amount = Number(ebook.price) || 0;
-    itemTitle = ebook.title;
-  } else {
-    if (settings.resell_enabled !== "1") return U.bad("Resell licences are closed right now.");
-    amount = U.toInt(settings.resell_price, 399);
-    itemTitle = "Resell Licence — 1 year";
+  const purchase = await resolvePurchase(env, settings, body);
+  if (purchase.error) return U.bad(purchase.error);
+  const kind = purchase.kind;
+  const ebook = purchase.ebook;
+  const itemTitle = purchase.itemTitle;
+  let amount = Number(purchase.amount) || 0;
+  let coupon = null;
+  if (U.clean(body.code, 32) && features.coupons) {
+    const check = await validateCoupon(db, settings, { code: body.code, amount });
+    if (!check.ok) return U.bad(check.error);
+    coupon = check;
+    amount = check.total;
   }
 
   const now = new Date();
@@ -232,6 +317,9 @@ async function createOrder(env, request) {
     instagram: U.clean(body.instagram, 60),
     audience: U.clean(body.audience, 40),
     preference: U.clean(body.preference, 40),
+    ...purchase.meta,
+    coupon: coupon ? { code: coupon.code, label: coupon.label, discount: coupon.discount } : null,
+    discount: coupon ? coupon.discount : 0,
   };
   const resellerCode = U.clean(body.res, 24);
 
@@ -242,72 +330,32 @@ async function createOrder(env, request) {
     )
     .bind(
       U.hex(8), ref, kind, ebook ? ebook.id : "", itemTitle, name, email, phone, amount,
-      settings.payu_enabled === "1" ? "payu" : settings.payment_link ? "link" : "manual",
+      gatewayState(settings).primary || "manual",
       U.hex(12), resellerCode, JSON.stringify(meta), now.toISOString()
     )
     .run();
 
   await logEvent(db, ref, "created", `${kind === "ebook" ? "Ebook" : "Resell licence"} order created · ${U.money(amount)}`);
 
+  if (coupon) {
+    await db.prepare("UPDATE coupons SET used = used + 1 WHERE id = ?").bind(coupon.couponId).run();
+  }
   const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
   const origin = U.originOf(request);
-  return U.json(await paymentInitiation(env, settings, order, origin));
+  const payload = await paymentInitiation(env, settings, order, origin);
+  // Remember the gateway-side order id so a verification callback can never be
+  // replayed against a different (more expensive) order reference.
+  if (payload.orderId && payload.mode === "razorpay") {
+    await db.prepare("UPDATE orders SET payu_txnid = ?, payu_mode = 'razorpay' WHERE ref = ?").bind(payload.orderId, ref).run();
+  }
+  if (payload.sessionId && payload.mode === "stripe") {
+    await db.prepare("UPDATE orders SET payu_txnid = ?, payu_mode = 'stripe' WHERE ref = ?").bind(payload.sessionId, ref).run();
+  }
+  return U.json(payload);
 }
 
 async function paymentInitiation(env, settings, order, origin) {
-  const base = {
-    ref: order.ref,
-    amount: order.amount,
-    itemTitle: order.item_title,
-    kind: order.kind,
-  };
-
-  if (settings.payu_enabled === "1" && settings.payu_key && settings.payu_salt) {
-    const firstname = order.name.split(" ")[0] || "Reader";
-    const fields = {
-      key: settings.payu_key,
-      txnid: order.ref,
-      amount: Number(order.amount).toFixed(2),
-      productinfo: order.item_title.slice(0, 100),
-      firstname,
-      email: order.email,
-      phone: order.phone,
-      surl: `${origin}/api/payu/return`,
-      furl: `${origin}/api/payu/return`,
-      udf1: order.kind,
-      udf2: order.email,
-      udf3: "",
-      udf4: "",
-      udf5: "",
-      service_provider: "payu_paisa",
-    };
-    const hash = await U.payuRequestHash({ ...fields, salt: settings.payu_salt });
-    return {
-      ...base,
-      mode: "payu",
-      action: settings.payu_mode === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment",
-      fields: { ...fields, hash },
-    };
-  }
-
-  if ((settings.payment_link || "").trim()) {
-    return {
-      ...base,
-      mode: "link",
-      link: settings.payment_link.trim(),
-      upi: settings.upi_id || "",
-      instructions: settings.pay_instructions || "",
-    };
-  }
-
-  return {
-    ...base,
-    mode: "manual",
-    upi: settings.upi_id || "",
-    instructions: settings.pay_instructions || "",
-    warning:
-      "No payment method is configured yet. Add PayU keys, a payment link or a UPI ID in Admin → Payments.",
-  };
+  return initiatePayment(env, settings, order, origin);
 }
 
 async function orderLookup(env, ref, url) {
@@ -322,9 +370,23 @@ async function orderLookup(env, ref, url) {
     .prepare("SELECT type, message, created_at FROM order_events WHERE order_ref = ? ORDER BY created_at ASC")
     .bind(ref)
     .all();
+  const meta = safeJson(order.meta, {});
+  const items = [];
+  if (order.status === "paid") {
+    const ids = Array.isArray(meta.ebookIds) && meta.ebookIds.length ? meta.ebookIds : order.ebook_id ? [order.ebook_id] : [];
+    for (const id of ids) {
+      const row = await db.prepare("SELECT id, title, slug, cover, pages, file_name FROM ebooks WHERE id = ?").bind(id).first();
+      if (row) {
+        items.push({
+          ...row,
+          downloadUrl: `/api/download/${order.download_token}?item=${encodeURIComponent(id)}`,
+        });
+      }
+    }
+  }
   const ebook = order.ebook_id
     ? await db.prepare("SELECT id, title, slug, cover, pages FROM ebooks WHERE id = ?").bind(order.ebook_id).first()
-    : null;
+    : items[0] || null;
   let reseller = null;
   if (order.kind === "resell" && order.status === "paid") {
     reseller = await db.prepare("SELECT * FROM resellers WHERE order_ref = ?").bind(ref).first();
@@ -354,6 +416,14 @@ async function orderLookup(env, ref, url) {
       paid_at: order.paid_at,
       downloads: order.downloads,
       downloadUrl: order.status === "paid" ? `/api/download/${order.download_token}` : "",
+      receiptUrl:
+        order.status === "paid" && readFeatures(settings).receipts
+          ? `/api/receipt/${encodeURIComponent(order.ref)}?email=${encodeURIComponent(order.email)}`
+          : "",
+      items,
+      discount: Number(meta.discount) || 0,
+      couponCode: meta.coupon && meta.coupon.code ? meta.coupon.code : "",
+      canReview: order.status === "paid",
       refundable: order.status === "paid",
       refundWindowDays: 0,
     },
@@ -468,14 +538,18 @@ async function payuReturn(request, env, isWebhook = false) {
   return new Response(null, { status: 303, headers: { location: target, "cache-control": "no-store" } });
 }
 
-async function deliverDownload(env, token) {
+async function deliverDownload(env, token, url) {
   const db = env.DB;
   const order = await db.prepare("SELECT * FROM orders WHERE download_token = ?").bind(token).first();
   if (!order) return U.bad("This download link is not valid.", 404);
   if (order.status !== "paid") return U.bad("This order is not paid yet.", 403);
 
-  const ebook = order.ebook_id
-    ? await db.prepare("SELECT * FROM ebooks WHERE id = ?").bind(order.ebook_id).first()
+  const meta = safeJson(order.meta, {});
+  const owned = Array.isArray(meta.ebookIds) ? meta.ebookIds : [];
+  const requested = U.clean(url && url.searchParams.get("item"), 40);
+  const ebookId = requested && owned.includes(requested) ? requested : order.ebook_id || owned[0] || "";
+  const ebook = ebookId
+    ? await db.prepare("SELECT * FROM ebooks WHERE id = ?").bind(ebookId).first()
     : null;
   const fileKey = ebook ? ebook.file_key || "" : "";
   const fileName = (ebook && ebook.file_name) || `${order.ref}.pdf`;
@@ -734,6 +808,7 @@ async function requireAdmin(request, env) {
 
 async function adminSetup(env, request) {
   const db = env.DB;
+  await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(new Date().toISOString()).run();
   const count = await db.prepare("SELECT COUNT(*) AS n FROM admins").first();
   if (count && count.n) return U.bad("Admin already exists. Please sign in.", 409);
   const body = await readJson(request);
@@ -754,7 +829,7 @@ async function adminSetup(env, request) {
 
 async function adminLogin(env, request) {
   const db = env.DB;
-  const ip = request.headers.get("cf-connecting-ip") || "local";
+  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-nf-client-connection-ip") || request.headers.get("x-forwarded-for") || "local";
   const now = Date.now();
   const record = attempts.get(ip) || { count: 0, at: now };
   if (now - record.at > 10 * 60 * 1000) {
@@ -775,10 +850,12 @@ async function adminLogin(env, request) {
   }
   attempts.delete(ip);
   const token = U.hex(24);
+  await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(new Date().toISOString()).run();
   await db
     .prepare("INSERT INTO sessions (token, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
     .bind(token, admin.id, new Date().toISOString(), new Date(Date.now() + 7 * 864e5).toISOString())
     .run();
+  await audit(db, { email: admin.email }, "login", "admin signed in", request);
   return U.json({ ok: true, admin: { email: admin.email } }, 200, {
     "set-cookie": U.sessionCookie(ADMIN_COOKIE, token, { secure: new URL(request.url).protocol === "https:" }),
   });
@@ -788,6 +865,9 @@ async function handleAdmin(request, env, url, admin) {
   const db = env.DB;
   const path = url.pathname.replace(/^\/api\/admin/, "");
   const method = request.method.toUpperCase();
+
+  const featureResponse = await adminRoute(request, env, url, admin);
+  if (featureResponse) return featureResponse;
 
   if (path === "/data" && method === "GET") {
     const [settings, ebooks, orders, tickets, requests, refunds, resellers, testimonials, stats] = await Promise.all([
@@ -801,9 +881,11 @@ async function handleAdmin(request, env, url, admin) {
       db.prepare("SELECT * FROM testimonials ORDER BY sort ASC").all(),
       buildStats(db),
     ]);
+    const extras = await adminExtras(env, settings);
     return U.json({
       admin: { email: admin.email },
       settings,
+      ...extras,
       ebooks: ebooks.results || [],
       orders: orders.results || [],
       tickets: tickets.results || [],
@@ -827,13 +909,17 @@ async function handleAdmin(request, env, url, admin) {
       .prepare("UPDATE admins SET pass_hash = ?, salt = ? WHERE id = ?")
       .bind(fresh.hash, fresh.salt, admin.id)
       .run();
+    // Sign out every other device — a leaked session dies with the old password.
+    await db.prepare("DELETE FROM sessions WHERE admin_id = ? AND token != ?").bind(admin.id, admin.token).run();
+    await audit(db, admin, "password_changed", "all other sessions revoked", request);
     return U.json({ ok: true });
   }
 
   if (path === "/settings" && method === "POST") {
-    const body = await readJson(request);
+    const body = normaliseGatewaySettings(await readJson(request));
     const allowed = Object.keys(DEFAULT_SETTINGS);
     const updates = [];
+    const savedKeys = [];
     for (const [key, value] of Object.entries(body)) {
       if (!allowed.includes(key)) continue;
       const rule = JSON_SETTINGS[key];
@@ -850,12 +936,15 @@ async function handleAdmin(request, env, url, admin) {
         }
         if (text.length > rule.max) return U.bad(`${key.replace(/_/g, " ")} is too large to save.`);
         updates.push(setSetting(db, key, text));
+        savedKeys.push(key);
         continue;
       }
       updates.push(setSetting(db, key, value));
+      savedKeys.push(key);
     }
     await Promise.all(updates);
-    return U.json({ ok: true });
+    if (savedKeys.length) await audit(db, admin, "settings_saved", savedKeys.slice(0, 20).join(", "), request);
+    return U.json({ ok: true, saved: savedKeys });
   }
 
   if (path === "/upload" && method === "POST") {
@@ -868,6 +957,10 @@ async function handleAdmin(request, env, url, admin) {
     if (file.size > maxBytes) return U.bad(`File is too big. Limit is ${Math.round(maxBytes / 1024 / 1024)}MB.`);
     const original = String(file.name || "upload");
     const ext = (original.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const allowedExt = kind === "file" ? ["pdf"] : ["jpg", "jpeg", "png", "webp", "gif", "svg"];
+    if (!allowedExt.includes(ext)) {
+      return U.bad(kind === "file" ? "Only PDF files can be uploaded as an ebook." : "Use a JPG, PNG, WEBP, GIF or SVG image.");
+    }
     const folder = kind === "file" ? "pdf" : "covers";
     const key = `${folder}/${U.hex(8)}-${U.slugify(original.replace(/\.[^.]+$/, ""))}.${ext || (kind === "file" ? "pdf" : "jpg")}`;
     const contentType = file.type || (ext === "pdf" ? "application/pdf" : "image/jpeg");
@@ -909,6 +1002,16 @@ async function handleAdmin(request, env, url, admin) {
       file_key: U.clean(body.file_key, 400),
       file_name: U.clean(body.file_name, 200),
       file_size: U.toInt(body.file_size, 0),
+      sample: U.clean(body.sample, 6000),
+      tags: JSON.stringify(
+        (Array.isArray(body.tags) ? body.tags : safeJson(body.tags, []))
+          .map((tag) => U.clean(tag, 40))
+          .filter(Boolean)
+          .slice(0, 20)
+      ),
+      ai_meta: body.ai_meta
+        ? (typeof body.ai_meta === "string" ? body.ai_meta : JSON.stringify(body.ai_meta)).slice(0, 60000)
+        : "",
       status: body.status === "draft" ? "draft" : "active",
       featured: body.featured ? 1 : 0,
       badge: U.oneLine(body.badge, 40),
@@ -920,12 +1023,14 @@ async function handleAdmin(request, env, url, admin) {
       const slug = U.slugify(body.slug || common.title) + (existing.slug && U.slugify(body.slug || common.title) !== existing.slug ? "" : "");
       await db
         .prepare(
-          `UPDATE ebooks SET slug=?, title=?, subtitle=?, description=?, highlights=?, category=?, pages=?, price=?, mrp=?, cover=?, file_key=?, file_name=?, file_size=?, status=?, featured=?, badge=?, sort=? WHERE id=?`
+          `UPDATE ebooks SET slug=?, title=?, subtitle=?, description=?, highlights=?, category=?, pages=?, price=?, mrp=?, cover=?, file_key=?, file_name=?, file_size=?, sample=?, tags=?, ai_meta=?, status=?, featured=?, badge=?, sort=? WHERE id=?`
         )
         .bind(
           slug, common.title, common.subtitle, common.description, common.highlights, common.category,
           common.pages, common.price, common.mrp, common.cover, common.file_key || existing.file_key,
-          common.file_name || existing.file_name, common.file_size || existing.file_size, common.status,
+          common.file_name || existing.file_name, common.file_size || existing.file_size,
+          common.sample || existing.sample || "", common.tags || existing.tags || "[]",
+          common.ai_meta || existing.ai_meta || "{}", common.status,
           common.featured, common.badge, common.sort, id
         )
         .run();
@@ -937,15 +1042,17 @@ async function handleAdmin(request, env, url, admin) {
     if (clash) slug = `${slug}-${U.hex(2)}`;
     await db
       .prepare(
-        `INSERT INTO ebooks (id, slug, title, subtitle, description, highlights, category, pages, price, mrp, cover, file_key, file_name, file_size, status, featured, badge, sort, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO ebooks (id, slug, title, subtitle, description, highlights, category, pages, price, mrp, cover, file_key, file_name, file_size, sample, tags, ai_meta, status, featured, badge, sort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         newId, slug, common.title, common.subtitle, common.description, common.highlights, common.category,
         common.pages, common.price, common.mrp, common.cover, common.file_key, common.file_name,
-        common.file_size, common.status, common.featured, common.badge, common.sort, new Date().toISOString()
+        common.file_size, common.sample, common.tags, common.ai_meta || "{}", common.status,
+        common.featured, common.badge, common.sort, new Date().toISOString()
       )
       .run();
+    await audit(db, admin, "ebook_created", common.title, request);
     return U.json({ ok: true, id: newId });
   }
 
@@ -1206,6 +1313,117 @@ async function buildStats(db) {
     top: top.results || [],
     funnel: funnel.results || [],
   };
+}
+
+/* ------------------------------ new gateways ------------------------------ */
+
+async function razorpayVerify(env, request) {
+  const db = env.DB;
+  const settings = await getSettings(db);
+  const body = await readJson(request);
+  const ref = U.clean(body.ref, 60);
+  const order = ref ? await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first() : null;
+  if (!order) return U.bad("Order not found", 404);
+  if (order.status === "paid") return U.json({ ok: true, redirect: `/order/${encodeURIComponent(ref)}?pay=success` });
+  if (!order.payu_txnid || order.payu_txnid !== String(body.razorpay_order_id || "")) {
+    await logEvent(db, ref, "verify_failed", "Razorpay order id did not match this order");
+    return U.bad("Payment does not match this order.", 403);
+  }
+  const valid = await verifyRazorpay(settings, body);
+  if (!valid) {
+    await logEvent(db, ref, "verify_failed", "Razorpay signature did not verify");
+    return U.bad("We could not verify that payment.", 403);
+  }
+  await markOrderPaid(db, ref, {
+    txnid: U.clean(body.razorpay_payment_id, 80),
+    mode: "razorpay",
+    note: `Razorpay payment ${U.clean(body.razorpay_payment_id, 80)}`,
+  });
+  return U.json({ ok: true, redirect: `/order/${encodeURIComponent(ref)}?pay=success` });
+}
+
+async function stripeReturn(env, request, url) {
+  const db = env.DB;
+  const settings = await getSettings(db);
+  const ref = U.clean(url.searchParams.get("ref"), 60);
+  const sessionId = U.clean(url.searchParams.get("session_id"), 200);
+  const order = ref ? await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first() : null;
+  let outcome = "failed";
+  let reason = "";
+
+  if (!order) reason = "order_not_found";
+  else if (!sessionId) reason = "missing_session";
+  else {
+    const session = await retrieveStripeSession(settings, sessionId);
+    if (!session) reason = "session_not_found";
+    else if (order.payu_txnid && order.payu_txnid !== sessionId) reason = "session_mismatch";
+    else if (session.payment_status !== "paid") reason = "unpaid";
+    else if (Number(session.amount_total || 0) < Math.round(Number(order.amount) * 100)) reason = "amount_mismatch";
+    else {
+      await markOrderPaid(db, order.ref, {
+        txnid: String(session.payment_intent || session.id || ""),
+        mode: "stripe",
+        note: `Stripe checkout ${session.id}`,
+      });
+      outcome = "success";
+    }
+    if (reason) await logEvent(db, order.ref, "verify_failed", `Stripe return: ${reason}`);
+  }
+
+  const target = `${U.originOf(request)}/order/${encodeURIComponent(ref || "")}?pay=${outcome}${reason ? `&reason=${encodeURIComponent(reason)}` : ""}`;
+  return new Response(null, { status: 303, headers: { location: target, "cache-control": "no-store" } });
+}
+
+async function stripeWebhook(env, request) {
+  const db = env.DB;
+  const settings = await getSettings(db);
+  const raw = await request.text();
+  const valid = await verifyStripeSignature(settings, raw, request.headers.get("stripe-signature") || "");
+  if (!valid) return U.bad("Invalid signature", 400);
+  let event = {};
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return U.bad("Invalid payload", 400);
+  }
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+    const session = event.data && event.data.object ? event.data.object : {};
+    const ref = U.clean(session.client_reference_id || (session.metadata && session.metadata.ref), 60);
+    if (ref) {
+      const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+      if (order && order.status !== "paid" && Number(session.amount_total || 0) >= Math.round(Number(order.amount) * 100)) {
+        await markOrderPaid(db, ref, { txnid: String(session.payment_intent || session.id || ""), mode: "stripe", note: "Confirmed by Stripe webhook" });
+      }
+    }
+  }
+  return U.json({ received: true });
+}
+
+async function orderReceipt(env, ref, url) {
+  const db = env.DB;
+  const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+  const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+  if (!order) return U.bad("Order not found", 404);
+  if (!email || email !== String(order.email).toLowerCase()) return U.bad("Email does not match this order.", 403);
+  if (order.status !== "paid") return U.bad("Receipt is available after payment.", 403);
+  const settings = await getSettings(db);
+  const meta = safeJson(order.meta, {});
+  const body = U.demoPdf(order.item_title || "Order receipt", `${settings.brand_name || "Neverbasic Diva"} · payment receipt`, [
+    `Order reference: ${order.ref}`,
+    `Buyer: ${order.name} · ${order.email}`,
+    `Amount paid: ${settings.currency_symbol || "₹"}${order.amount}`,
+    meta.discount ? `Coupon ${meta.coupon?.code || ""} saved ${settings.currency_symbol || "₹"}${meta.discount}` : "",
+    `Payment method: ${order.payment_mode || "manual"}${order.payu_txnid ? ` · ${order.payu_txnid}` : ""}`,
+    `Paid on: ${order.paid_at || ""}`,
+    "This receipt confirms a digital product purchase. Your download link lives on your order page.",
+  ]);
+  return new Response(body, {
+    headers: {
+      "content-type": "application/pdf",
+      "content-disposition": `attachment; filename="receipt-${order.ref}.pdf"`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 async function readJson(request) {

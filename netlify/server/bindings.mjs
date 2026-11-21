@@ -118,8 +118,31 @@ const assets = {
   },
 };
 
+// Netlify site environment variables are passed through so the AI provider chain
+// can read keys from the Netlify dashboard instead of the admin panel. Admin-saved
+// keys always win; these are the fallback. Values are never sent to the browser.
+function passthroughEnv() {
+  const out = {};
+  const keys = [
+    "GROQ_API_KEY",
+    "GROQ_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_KEY",
+    // First-run owner account. Only used when no admin with this email exists.
+    "ADMIN_EMAIL",
+    "ADMIN_PASSWORD",
+  ];
+  if (typeof process !== "undefined" && process.env) {
+    for (const key of keys) {
+      if (process.env[key]) out[key] = process.env[key];
+    }
+  }
+  return out;
+}
+
 export const env = {
   DB: new Database(),
   FILES: new FileStore(),
   ASSETS: assets,
+  ...passthroughEnv(),
 };
