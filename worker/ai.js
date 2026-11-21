@@ -22,12 +22,12 @@ export const PROVIDER_CATALOG = {
     // OpenRouter retires free slugs without notice, so keep these to ids that
     // currently answer from https://openrouter.ai/api/v1/models.
     models: [
-      "google/gemma-4-31b-it:free",
       "inclusionai/ling-3.2-flash:free",
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "nvidia/nemotron-3.5-lightning:free",
-      "baidu/ernie-5.5-flash-preview:free",
       "particle-ai/particle-1:free",
+      "google/gemma-4-26b-a4b-it:free",
+      "baidu/ernie-5.5-flash-preview:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "liquid/lfm-3-1.7b:free",
     ],
     jsonMode: false,
   },
@@ -163,6 +163,10 @@ export function aiStatus(settings = {}, env = {}) {
 
 /* --------------------------------- core --------------------------------- */
 
+// gpt-oss models are reasoning models: without a low effort setting they spend
+// the entire max_tokens budget thinking and return an empty message.
+const needsLowReasoning = (model) => /gpt-oss/i.test(String(model || ""));
+
 async function fetchWithTimeout(url, options, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -212,6 +216,7 @@ export async function aiChat({
         max_tokens: maxTokens,
       };
       if (json && provider.jsonMode) body.response_format = { type: "json_object" };
+      if (needsLowReasoning(model)) body.reasoning_effort = "low";
 
       const headers = {
         "content-type": "application/json",
@@ -288,7 +293,21 @@ export async function aiChat({
         attempts.push({ provider: provider.label, model, status: 200, error: "unreadable response", ms: Date.now() - started });
         continue;
       }
-      const text = extractText(data);
+      let text = extractText(data);
+      // A reasoning model that ran out of budget returns no content at all. Give
+      // it a bigger allowance once instead of treating it as a dead model.
+      if (!text && data?.choices?.[0]?.finish_reason === "length" && maxTokens < 4000) {
+        try {
+          const retry = await fetchWithTimeout(
+            `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`,
+            { method: "POST", headers, body: JSON.stringify({ ...body, max_tokens: Math.min(4000, Math.max(600, maxTokens * 8)) }) },
+            timeout
+          );
+          if (retry.ok) text = extractText(await retry.json());
+        } catch {
+          /* fall through to the empty-response attempt below */
+        }
+      }
       if (!text) {
         attempts.push({ provider: provider.label, model, status: 200, error: "empty response", ms: Date.now() - started });
         continue;
@@ -854,7 +873,7 @@ export async function testAi({ settings = {}, env = {} } = {}) {
     settings,
     env,
     json: false,
-    maxTokens: 20,
+    maxTokens: 400,
     messages: [
       { role: "system", content: "Reply with exactly: ready" },
       { role: "user", content: "ping" },
