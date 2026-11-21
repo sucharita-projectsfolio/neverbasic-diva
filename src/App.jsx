@@ -1,10 +1,47 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { SiteProvider, useSite, usePath, Link, api, currentReseller } from "./lib/api.jsx";
 import { ToastHost } from "./ui.jsx";
+import { readKit, fillTokens } from "./lib/sitekit.js";
 import Home from "./pages/Home.jsx";
 import { Shop, EbookPage, Checkout, OrderPage, TrackPage } from "./pages/Store.jsx";
 import { SupportPage, RequestPage, RefundPage, PoliciesPage, ResellPage, PortalPage } from "./pages/Support.jsx";
 import Admin from "./admin/Admin.jsx";
+
+function setMeta(name, content) {
+  if (!content) return;
+  let tag = document.querySelector(`meta[name="${name}"]`);
+  if (!tag) {
+    tag = document.createElement("meta");
+    tag.setAttribute("name", name);
+    document.head.appendChild(tag);
+  }
+  tag.setAttribute("content", content);
+}
+
+function OfferClock({ endsAt, label }) {
+  const [left, setLeft] = useState(() => new Date(endsAt).getTime() - Date.now());
+  useEffect(() => {
+    const tick = () => setLeft(new Date(endsAt).getTime() - Date.now());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [endsAt]);
+  if (!endsAt || Number.isNaN(new Date(endsAt).getTime()) || left <= 0) return null;
+  const days = Math.floor(left / 864e5);
+  const hours = Math.floor((left % 864e5) / 36e5);
+  const minutes = Math.floor((left % 36e5) / 6e4);
+  const seconds = Math.floor((left % 6e4) / 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    <span className="offer-clock">
+      <span className="offer-clock-label">{label}</span>
+      <strong>
+        {days ? `${days}d ` : ""}
+        {pad(hours)}:{pad(minutes)}:{pad(seconds)}
+      </strong>
+    </span>
+  );
+}
 
 function Nav() {
   const { site } = useSite();
@@ -12,7 +49,9 @@ function Nav() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const settings = site?.settings || {};
+  const { content, theme } = useMemo(() => readKit(site), [site]);
   const brand = settings.brand_name || "Neverbasic Diva";
+  const tokens = { brand, insta: settings.instagram || "neverbasic_diva", price: Number(settings.resell_price) || 399 };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -24,18 +63,19 @@ function Nav() {
   useEffect(() => setOpen(false), [path]);
 
   const links = [
-    ["/ebooks", "Library"],
-    ["/resell", "Resell rights"],
-    ["/support", "Support"],
-    ["/track", "My order"],
+    ["/ebooks", fillTokens(content.nav_library, tokens)],
+    ["/resell", fillTokens(content.nav_resell, tokens)],
+    ["/support", fillTokens(content.nav_support, tokens)],
+    ["/track", fillTokens(content.nav_order, tokens)],
   ];
 
   return (
     <>
-      {settings.announcement ? (
-        <div className="marquee" aria-hidden="true">
+      {settings.announcement && theme.showAnnouncement ? (
+        <div className={`marquee speed-${theme.announcementSpeed || "normal"}`} aria-hidden="true">
           <div className="marquee-track">
             <span>{settings.announcement}</span>
+            <OfferClock endsAt={theme.offerEndsAt} label={content.offer_label} />
             <span>{settings.announcement}</span>
             <span>{settings.announcement}</span>
           </div>
@@ -63,7 +103,7 @@ function Nav() {
               </Link>
             ))}
             <Link to="/ebooks" className="btn btn-primary btn-sm nav-cta">
-              Shop the library
+              {fillTokens(content.nav_cta, tokens)}
             </Link>
           </nav>
           <button
@@ -85,6 +125,7 @@ function Nav() {
 function Footer() {
   const { site } = useSite();
   const settings = site?.settings || {};
+  const { content } = useMemo(() => readKit(site), [site]);
   const insta = settings.instagram || "neverbasic_diva";
   return (
     <footer className="footer">
@@ -94,9 +135,7 @@ function Footer() {
             <span className="brand-mark" aria-hidden="true">
               ✿
             </span>
-            <span className="brand-word">
-              {(settings.brand_name || "Neverbasic Diva").toLowerCase()}
-            </span>
+            <span className="brand-word">{(settings.brand_name || "Neverbasic Diva").toLowerCase()}</span>
           </div>
           <p>{settings.brand_tagline}</p>
           <a className="insta-link" href={`https://instagram.com/${insta}`} target="_blank" rel="noreferrer">
@@ -104,31 +143,33 @@ function Footer() {
           </a>
         </div>
         <div className="footer-col">
-          <h5>Explore</h5>
-          <Link to="/ebooks">The library</Link>
-          <Link to="/resell">Resell rights</Link>
-          <Link to="/request">Request an ebook</Link>
-          <Link to="/track">Find my order</Link>
+          <h5>{content.footer_explore}</h5>
+          <Link to="/ebooks">{content.nav_library}</Link>
+          <Link to="/resell">{content.nav_resell}</Link>
+          <Link to="/request">{content.footer_link_request}</Link>
+          <Link to="/track">{content.footer_link_track}</Link>
         </div>
         <div className="footer-col">
-          <h5>Care</h5>
-          <Link to="/support">Help &amp; support</Link>
-          <Link to="/refund">Refund promise</Link>
-          <Link to="/policies">Licence &amp; privacy</Link>
-          <a href={`mailto:${settings.support_email || ""}`}>Email us</a>
+          <h5>{content.footer_care}</h5>
+          <Link to="/support">{content.footer_link_support}</Link>
+          <Link to="/refund">{content.footer_link_refund}</Link>
+          <Link to="/policies">{content.footer_link_policies}</Link>
+          <a href={`mailto:${settings.support_email || ""}`}>{content.footer_link_email}</a>
         </div>
         <div className="footer-col">
-          <h5>Payments</h5>
-          <p className="footer-note">Secure checkout via PayU · UPI · cards</p>
-          <p className="footer-note">Instant PDF delivery after payment</p>
+          <h5>{content.footer_payments}</h5>
+          <p className="footer-note">{content.footer_note_1}</p>
+          <p className="footer-note">{content.footer_note_2}</p>
           <Link to="/admin" className="footer-admin">
-            Admin
+            {content.footer_admin}
           </Link>
         </div>
       </div>
       <div className="footer-bottom">
-        <span>© {new Date().getFullYear()} {settings.brand_name || "Neverbasic Diva"}. All rights reserved.</span>
-        <span className="footer-fine">Every ebook is original work. Reselling without a licence is not permitted.</span>
+        <span>
+          © {new Date().getFullYear()} {settings.brand_name || "Neverbasic Diva"}. {content.footer_rights}
+        </span>
+        <span className="footer-fine">{content.footer_fine}</span>
       </div>
     </footer>
   );
@@ -139,7 +180,7 @@ function Routes() {
   const { pathname } = useMemo(() => new URL(path, window.location.origin), [path]);
   const clean = pathname.replace(/\/+$/, "") || "/";
 
-  if (clean === "/" ) return <Home />;
+  if (clean === "/") return <Home />;
   if (clean === "/ebooks") return <Shop />;
   if (clean.startsWith("/ebooks/")) return <EbookPage slug={clean.slice("/ebooks/".length)} />;
   if (clean.startsWith("/checkout/")) return <Checkout ebookId={clean.slice("/checkout/".length)} />;
@@ -159,14 +200,34 @@ function Shell() {
   const path = usePath();
   const { site, error } = useSite();
   const settings = site?.settings || {};
+  const { theme, shape, font } = useMemo(() => readKit(site), [site]);
 
   useEffect(() => {
     const root = document.documentElement;
     if (settings.accent_color) root.style.setProperty("--accent", settings.accent_color);
     if (settings.ink_color) root.style.setProperty("--ink", settings.ink_color);
     if (settings.bg_color) root.style.setProperty("--bg", settings.bg_color);
-    document.title = `${settings.brand_name || "Neverbasic Diva"} — ${settings.brand_tagline || "micro-ebooks"}`;
-  }, [settings.accent_color, settings.ink_color, settings.bg_color, settings.brand_name, settings.brand_tagline]);
+    root.dataset.shape = shape.id;
+    root.dataset.density = theme.density || "cozy";
+    root.style.setProperty("--r-sm", `${shape.sm}px`);
+    root.style.setProperty("--r-md", `${shape.md}px`);
+    root.style.setProperty("--r-lg", `${shape.lg}px`);
+    root.style.setProperty("--font-display", font.display);
+    root.style.setProperty("--font-body", font.body);
+    document.title =
+      theme.seoTitle || `${settings.brand_name || "Neverbasic Diva"} — ${settings.brand_tagline || "micro-ebooks"}`;
+    setMeta("description", theme.seoDescription || settings.brand_tagline);
+    setMeta("theme-color", settings.accent_color);
+    if (theme.ogImage) {
+      let og = document.querySelector('meta[property="og:image"]');
+      if (!og) {
+        og = document.createElement("meta");
+        og.setAttribute("property", "og:image");
+        document.head.appendChild(og);
+      }
+      og.setAttribute("content", theme.ogImage);
+    }
+  }, [settings.accent_color, settings.ink_color, settings.bg_color, settings.brand_name, settings.brand_tagline, theme, shape, font]);
 
   useEffect(() => {
     const { pathname } = new URL(path, window.location.origin);
@@ -198,6 +259,7 @@ function Shell() {
   const isAdmin = path.startsWith("/admin");
   return (
     <div className="app">
+      {theme.customCss ? <style>{theme.customCss}</style> : null}
       {isAdmin ? (
         <Routes />
       ) : (

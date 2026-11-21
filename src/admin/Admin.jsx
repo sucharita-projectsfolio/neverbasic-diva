@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, money, prettyDate, prettyDateTime } from "../lib/api.jsx";
+import Studio from "./Studio.jsx";
 import {
   Button,
   CopyButton,
@@ -198,6 +199,7 @@ const SECTIONS = [
   ["requests", "Requests", "✎"],
   ["refunds", "Refunds", "↺"],
   ["reviews", "Reviews", "★"],
+  ["design", "Design studio", "◐"],
   ["content", "Site content", "✿"],
   ["account", "Account", "⚙"],
 ];
@@ -282,6 +284,7 @@ function AdminShell({ data, reload, onLogout }) {
           {section === "requests" ? <Requests data={data} reload={reload} /> : null}
           {section === "refunds" ? <Refunds data={data} reload={reload} /> : null}
           {section === "reviews" ? <Reviews data={data} reload={reload} /> : null}
+          {section === "design" ? <Studio settings={settings} reload={reload} /> : null}
           {section === "content" ? <Content settings={settings} reload={reload} /> : null}
           {section === "account" ? <Account reload={reload} admin={data.admin} /> : null}
         </div>

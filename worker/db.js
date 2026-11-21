@@ -215,6 +215,12 @@ export const DEFAULT_SETTINGS = {
     { value: "2 min", label: "average read" },
     { value: "100%", label: "refund honour" },
   ]),
+  // Store builder: ordered home-page sections, global copy overrides and look settings.
+  // They are JSON blobs edited only from the admin design studio; the storefront
+  // merges them over its built-in defaults (see src/lib/sitekit.jsx).
+  site_blocks: "[]",
+  site_content: "{}",
+  site_theme: "{}",
 };
 
 const SEED_EBOOKS = [

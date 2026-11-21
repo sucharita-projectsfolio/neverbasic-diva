@@ -10,7 +10,15 @@ const PUBLIC_KEYS = [
   "payment_link", "upi_id", "pay_instructions", "resell_price", "resell_enabled",
   "resell_commission_note", "refund_window_days", "refund_policy", "terms", "license_terms",
   "privacy", "about", "faqs", "stats", "payu_mode",
+  "site_blocks", "site_content", "site_theme",
 ];
+
+// JSON settings edited by the design studio: [key, max serialised length, kind]
+const JSON_SETTINGS = {
+  site_blocks: { max: 200000, kind: "array" },
+  site_content: { max: 80000, kind: "object" },
+  site_theme: { max: 40000, kind: "object" },
+};
 
 export default {
   async fetch(request, env) {
@@ -111,6 +119,9 @@ async function sitePayload(env) {
   };
   return U.json({
     settings: pub,
+    blocks: safeJson(settings.site_blocks, []),
+    content: safeJson(settings.site_content, {}),
+    theme: safeJson(settings.site_theme, {}),
     ebooks: (ebooks.results || []).map(publicEbook),
     testimonials: testimonials.results || [],
   });
@@ -824,7 +835,24 @@ async function handleAdmin(request, env, url, admin) {
     const allowed = Object.keys(DEFAULT_SETTINGS);
     const updates = [];
     for (const [key, value] of Object.entries(body)) {
-      if (allowed.includes(key)) updates.push(setSetting(db, key, value));
+      if (!allowed.includes(key)) continue;
+      const rule = JSON_SETTINGS[key];
+      if (rule) {
+        const raw = typeof value === "string" ? value.trim() || (rule.kind === "array" ? "[]" : "{}") : value;
+        let text;
+        try {
+          text = typeof raw === "string" ? raw : JSON.stringify(raw);
+          const parsed = JSON.parse(text);
+          const shapeOk = rule.kind === "array" ? Array.isArray(parsed) : parsed && typeof parsed === "object" && !Array.isArray(parsed);
+          if (!shapeOk) return U.bad(`${key.replace(/_/g, " ")} is not valid.`);
+        } catch {
+          return U.bad(`${key.replace(/_/g, " ")} is not valid JSON.`);
+        }
+        if (text.length > rule.max) return U.bad(`${key.replace(/_/g, " ")} is too large to save.`);
+        updates.push(setSetting(db, key, text));
+        continue;
+      }
+      updates.push(setSetting(db, key, value));
     }
     await Promise.all(updates);
     return U.json({ ok: true });

@@ -27,9 +27,12 @@ import {
   useToast,
 } from "../ui.jsx";
 import EbookCard from "./EbookCard.jsx";
+import { readKit } from "../lib/sitekit.js";
+import { Rich } from "./blocks.jsx";
 
 export function Shop() {
   const { site } = useSite();
+  const { content: copy } = readKit(site);
   const [category, setCategory] = useState("All");
   const ebooks = site.ebooks || [];
   const categories = ["All", ...Array.from(new Set(ebooks.map((book) => book.category).filter(Boolean)))];
@@ -39,14 +42,11 @@ export function Shop() {
     <div className="page">
       <div className="wrap">
         <header className="page-head">
-          <span className="eyebrow">the full library</span>
+          <span className="eyebrow">{copy.shop_eyebrow}</span>
           <h1>
-            Read it tonight, <em>use it tomorrow.</em>
+            <Rich text={copy.shop_title} />
           </h1>
-          <p>
-            Every ebook is short, specific and priced like a snack. Instant PDF access the moment payment
-            clears — plus a lifetime order page you can return to.
-          </p>
+          <p>{copy.shop_sub}</p>
         </header>
         <div className="filter-row">
           {categories.map((item) => (
