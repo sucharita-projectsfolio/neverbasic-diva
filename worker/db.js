@@ -332,17 +332,20 @@ export function ensureReady(env) {
 
 async function init(env) {
   const db = env.DB;
-  // D1 splits exec() input on newlines, so run the DDL as a batch of prepared statements.
-  const ddl = SCHEMA.split(";")
-    .map((statement) => statement.trim())
-    .filter(Boolean)
-    .map((statement) => db.prepare(statement));
-  await db.batch(ddl);
+  // On Netlify the schema is applied by database migrations, so DDL only runs on D1.
+  if (!db.schemaManaged) {
+    // D1 splits exec() input on newlines, so run the DDL as a batch of prepared statements.
+    const ddl = SCHEMA.split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean)
+      .map((statement) => db.prepare(statement));
+    await db.batch(ddl);
+  }
 
   const existing = await db.prepare("SELECT COUNT(*) AS n FROM settings").first();
   if (!existing || !existing.n) {
     const statements = Object.entries(DEFAULT_SETTINGS).map(([key, value]) =>
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind(key, String(value))
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING").bind(key, String(value))
     );
     await db.batch(statements);
   }

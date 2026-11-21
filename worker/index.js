@@ -151,7 +151,7 @@ async function trackVisit(env, request) {
   if (path.startsWith("/admin")) return U.json({ ok: true });
   const day = new Date().toISOString().slice(0, 10);
   await env.DB.prepare(
-    "INSERT INTO visits (day, path, count) VALUES (?, ?, 1) ON CONFLICT(day, path) DO UPDATE SET count = count + 1"
+    "INSERT INTO visits (day, path, count) VALUES (?, ?, 1) ON CONFLICT(day, path) DO UPDATE SET count = visits.count + 1"
   )
     .bind(day, path)
     .run();
