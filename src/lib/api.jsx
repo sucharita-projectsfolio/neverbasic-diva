@@ -27,7 +27,52 @@ export async function api(path, { method = "GET", body, form } = {}) {
   return data;
 }
 
-export const money = (value) => "₹" + Number(value || 0).toLocaleString("en-IN");
+const CURRENCY_LOCALE = {
+  INR: "en-IN",
+  USD: "en-US",
+  GBP: "en-GB",
+  EUR: "de-DE",
+  AED: "en-AE",
+  AUD: "en-AU",
+  CAD: "en-CA",
+  SGD: "en-SG",
+};
+
+let currencyView = { currency: "INR", symbol: "₹", rate: 1, locale: "en-IN" };
+
+export function setCurrencyView(next = {}) {
+  currencyView = { ...currencyView, ...next };
+}
+
+export const getCurrencyView = () => currencyView;
+
+// Store prices live in INR; this formats the buyer's converted amount.
+export function formatPrice(value, config = {}) {
+  const currency = String(config.currency || "INR").toUpperCase();
+  const rate = currency === "INR" ? 1 : Number(config.rate) || 1;
+  const amount = (Number(value) || 0) / rate;
+  const decimals = currency === "INR" ? 0 : 2;
+  return `${config.symbol || "₹"}${amount.toLocaleString(config.locale || CURRENCY_LOCALE[currency] || "en-IN", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
+}
+
+export const money = (value) => formatPrice(value, currencyView);
+
+// Admin screens always show the INR ledger, whatever the storefront currency is.
+export const moneyBase = (value) => formatPrice(value, { currency: "INR", symbol: "₹", rate: 1, locale: "en-IN" });
+
+export const currencyConfigFor = (code, pricing) => {
+  const entry = (pricing?.currencies || []).find((row) => row.code === code);
+  if (!entry) return { currency: "INR", symbol: "₹", rate: 1, locale: "en-IN" };
+  return {
+    currency: entry.code,
+    symbol: entry.symbol,
+    rate: entry.rate,
+    locale: CURRENCY_LOCALE[entry.code] || "en-IN",
+  };
+};
 
 export const prettyDate = (value) => {
   if (!value) return "—";
@@ -95,6 +140,7 @@ export function SiteProvider({ children }) {
   const [site, setSite] = useState(null);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState(null);
+  const [currency, setCurrencyCode] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +155,48 @@ export function SiteProvider({ children }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Country-aware currency: saved choice, then geo detection, then the shop's
+  // default. Every price on the storefront renders through this.
+  useEffect(() => {
+    if (!site || !site.pricing) return;
+    const list = site.pricing.currencies || [];
+    if (!list.length) return;
+    const stored = currency || window.localStorage.getItem("nbd:currency") || "";
+    const region =
+      typeof navigator !== "undefined" ? String(navigator.language || "").split("-")[1] || "" : "";
+    const regionCurrency = {
+      US: "USD",
+      GB: "GBP",
+      IN: "INR",
+      AE: "AED",
+      AU: "AUD",
+      CA: "CAD",
+      SG: "SGD",
+      DE: "EUR",
+      FR: "EUR",
+      ES: "EUR",
+      IT: "EUR",
+      NL: "EUR",
+    }[region.toUpperCase()];
+    const chosen =
+      list.find((row) => row.code === stored) ||
+      list.find((row) => row.code === site.pricing.detected) ||
+      list.find((row) => row.code === regionCurrency) ||
+      list.find((row) => row.code === site.pricing.default) ||
+      list[0];
+    setCurrencyView(currencyConfigFor(chosen.code, site.pricing));
+    if (chosen.code !== currency) setCurrencyCode(chosen.code);
+  }, [site, currency]);
+
+  useEffect(() => {
+    if (!currency) return;
+    try {
+      window.localStorage.setItem("nbd:currency", currency);
+    } catch {
+      /* storage blocked */
+    }
+  }, [currency]);
 
   // Design-studio live preview: when the storefront runs inside the admin's
   // preview frame, the builder pushes its unsaved layout here so edits appear
@@ -143,9 +231,25 @@ export function SiteProvider({ children }) {
     };
   }, [site, draft]);
 
-  return (
-    <SiteContext.Provider value={{ site: liveSite, error, reload: load }}>{children}</SiteContext.Provider>
+  const pricing = site && site.pricing ? site.pricing : null;
+  const value = useMemo(
+    () => ({
+      site: liveSite,
+      error,
+      reload: load,
+      pricing,
+      currency,
+      setCurrency: (code) => {
+        const next = String(code || "").toUpperCase();
+        // Update the formatter before React re-renders so prices never flash in
+        // the previous currency.
+        if (pricing) setCurrencyView(currencyConfigFor(next, pricing));
+        setCurrencyCode(next);
+      },
+    }),
+    [liveSite, error, load, pricing, currency]
   );
+  return <SiteContext.Provider value={value}>{children}</SiteContext.Provider>;
 }
 
 export const useSite = () => useContext(SiteContext);

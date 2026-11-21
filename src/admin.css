@@ -111,3 +111,11 @@
   .studio.has-preview { grid-template-columns: minmax(0, 1fr); }
   .studio-preview { position: static; }
 }
+
+/* ---------------- country pricing + delivery email ---------------- */
+.rates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 12px 0 4px;
+}

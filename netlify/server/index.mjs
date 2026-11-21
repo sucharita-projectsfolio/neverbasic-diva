@@ -4,7 +4,10 @@ import worker from "../../worker/index.js";
 import { env } from "./bindings.mjs";
 
 export default {
-  fetch(request) {
-    return worker.fetch(request, env);
+  // Netlify exposes edge geo data on the function context; pass the country
+  // through so prices can default to the buyer's currency.
+  fetch(request, context) {
+    const country = context && context.geo && context.geo.country && context.geo.country.code;
+    return worker.fetch(request, country ? { ...env, GEO_COUNTRY: country } : env);
   },
 };

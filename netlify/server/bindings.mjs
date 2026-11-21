@@ -128,6 +128,13 @@ function passthroughEnv() {
     "GROQ_KEY",
     "OPENROUTER_API_KEY",
     "OPENROUTER_KEY",
+    // Order delivery email (order PDF + receipt attachments).
+    "RESEND_API_KEY",
+    "MAIL_FROM",
+    // Optional Firebase email/password sign-in for customer accounts.
+    "FIREBASE_API_KEY",
+    // Absolute site origin used in emailed download links.
+    "SITE_URL",
     // First-run owner account. Only used when no admin with this email exists.
     "ADMIN_EMAIL",
     "ADMIN_PASSWORD",

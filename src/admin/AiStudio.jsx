@@ -293,7 +293,7 @@ export default function AiStudio({ data, reload }) {
     <div className="stack-lg">
       <Card
         title="Provider chain"
-        hint="Groq runs first (free, fast, 120B). When its quota runs out the store falls through to OpenRouter's free models, then any custom endpoint. Nothing breaks when one key is exhausted."
+        hint="Groq's 120B gpt-oss runs first (fast + strongest free model there), then OpenRouter's Nemotron 3 Ultra 550B and Ernie 5.5, then any custom endpoint. A dead model is skipped automatically, so one exhausted quota never breaks the store."
         actions={
           <>
             <Button size="sm" variant="secondary" onClick={test} loading={testing}>

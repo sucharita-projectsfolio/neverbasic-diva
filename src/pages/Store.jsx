@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   api,
+  currencyConfigFor,
+  formatPrice,
   Link,
   money,
   navigate,
@@ -10,7 +12,7 @@ import {
   usePath,
   useSite,
 } from "../lib/api.jsx";
-import { startPayment } from "../lib/pay.jsx";
+import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
 import {
   Button,
   Chip,
@@ -241,7 +243,7 @@ export function EbookPage({ slug }) {
 }
 
 export function Checkout({ ebookId }) {
-  const { site } = useSite();
+  const { site, currency, pricing, setCurrency } = useSite();
   const toast = useToast();
   const ebook = (site.ebooks || []).find((book) => book.id === ebookId);
   const [form, setForm] = useState({ name: "", email: "", phone: "" });
@@ -251,6 +253,7 @@ export function Checkout({ ebookId }) {
   const [code, setCode] = useState("");
   const [coupon, setCoupon] = useState(null);
   const [codeBusy, setCodeBusy] = useState(false);
+  const [method, setMethod] = useState("");
 
   useEffect(() => {
     try {
@@ -274,7 +277,10 @@ export function Checkout({ ebookId }) {
   }
 
   const payment = site.settings.payment || {};
+  const gateway = site.payment || {};
   const total = coupon ? coupon.total : ebook.price;
+  const methods = methodsForCurrency({ ...payment, ...gateway }, currency);
+  const activeMethod = methods.find((row) => row.id === method) || methods[0] || null;
 
   async function applyCode() {
     if (!code.trim()) return;
@@ -303,12 +309,19 @@ export function Checkout({ ebookId }) {
       window.localStorage.setItem("nbd:buyer", JSON.stringify(form));
       const result = await api("/api/orders", {
         method: "POST",
-        body: { ...form, ebookId: ebook.id, kind: "ebook", code: coupon ? coupon.code : "" },
+        body: {
+          ...form,
+          ebookId: ebook.id,
+          kind: "ebook",
+          code: coupon ? coupon.code : "",
+          currency,
+          method: activeMethod ? activeMethod.id : "",
+        },
       });
       rememberOrder(result.ref, form.email);
       if (result.warning) toast(result.warning, "bad");
-      startPayment(result, form.email);
-      if (result.mode !== "payu") setBusy(false);
+      const mode = startPayment(result, form.email);
+      if (!["payu", "paypal", "stripe"].includes(mode)) setBusy(false);
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -326,9 +339,8 @@ export function Checkout({ ebookId }) {
             Almost <em>yours.</em>
           </h1>
           <p className="muted">
-            {payment.payu
-              ? "You'll be taken to PayU's secure checkout. Your download unlocks the moment it verifies."
-              : "Pay by UPI or the payment link, then paste the reference. Access unlocks after verification."}
+            Pay the exact amount shown in {currency || "INR"}. The moment the gateway confirms it, your PDF
+            unlocks here and lands in your inbox with a receipt.
           </p>
           <form onSubmit={submit} className="checkout-form">
             <Field label="Your name">
@@ -373,6 +385,40 @@ export function Checkout({ ebookId }) {
               </div>
             ) : null}
             {coupon ? <p className="field-hint">✓ {coupon.code} · {coupon.label}</p> : null}
+            {pricing?.currencies?.length ? (
+              <div className="pay-currency">
+                <span>Prices in</span>
+                <select value={currency || "INR"} onChange={(event) => setCurrency(event.target.value)} aria-label="Currency">
+                  {pricing.currencies.map((row) => (
+                    <option key={row.code} value={row.code}>
+                      {row.code} · {row.symbol}
+                    </option>
+                  ))}
+                </select>
+                <small>You are charged exactly what is shown.</small>
+              </div>
+            ) : null}
+            {methods.length ? (
+              <div className="pay-methods" role="radiogroup" aria-label="Payment method">
+                {methods.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={(activeMethod ? activeMethod.id : "") === row.id}
+                    className={`pay-method${(activeMethod ? activeMethod.id : "") === row.id ? " on" : ""}`}
+                    onClick={() => setMethod(row.id)}
+                  >
+                    <strong>{row.label}</strong>
+                    <small>{row.note}</small>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="field-hint">
+                Automatic checkout is not connected yet — add PayPal or PayU keys in Admin → Payments.
+              </p>
+            )}
             <label className="check-line">
               <input type="checkbox" checked={agree} onChange={(event) => setAgree(event.target.checked)} />
               <span>
@@ -382,13 +428,14 @@ export function Checkout({ ebookId }) {
             </label>
             {error ? <p className="form-error">{error}</p> : null}
             <Button type="submit" size="lg" loading={busy} className="btn-block">
-              Pay {money(total)} securely →
+              Pay {money(total)}{activeMethod ? ` with ${activeMethod.label}` : " securely"} →
             </Button>
             <p className="check-fine">
-              {payment.payu
-                ? "PayU · UPI, cards, netbanking, wallets. We never store your payment details."
-                : "Manual verification is used until the gateway is connected. Your access is guaranteed."}
+              {activeMethod
+                ? `${activeMethod.label} · ${activeMethod.note}. We never see or store your card details.`
+                : "Connect a payment gateway in Admin → Payments to take automatic payments."}
             </p>
+            <p className="check-fine">✿ PDF + receipt emailed the moment payment is confirmed.</p>
           </form>
         </div>
         <aside className="checkout-summary">
@@ -416,13 +463,13 @@ export function Checkout({ ebookId }) {
             </div>
           ) : null}
           <div className="summary-total">
-            <span>Total</span>
+            <span>Total {currency ? `(${currency})` : ""}</span>
             <strong>{money(total)}</strong>
           </div>
           <div className="summary-perks">
             <span>✿ Yours forever</span>
+            <span>✿ PDF emailed + download here</span>
             <span>✿ 100% refund promise</span>
-            <span>✿ Support replies in hours</span>
           </div>
         </aside>
       </div>
@@ -439,6 +486,7 @@ export function OrderPage({ reference }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [utr, setUtr] = useState("");
+  const [paying, setPaying] = useState("");
   const [showRefund, setShowRefund] = useState(false);
   const [refundForm, setRefundForm] = useState({ preference: "material", reason: "" });
   const ref = decodeURIComponent(reference || "");
@@ -507,6 +555,31 @@ export function OrderPage({ reference }) {
   const paid = order.status === "paid";
   const payFlag = query.get("pay");
   const reason = query.get("reason");
+  const methods = data.payment?.methods || [];
+  const orderMoney = formatPrice(
+    order.amountCharged || order.amount,
+    currencyConfigFor(order.currency || "INR", site.pricing)
+  );
+
+  async function payWith(methodId) {
+    setPaying(methodId);
+    try {
+      const result = await api(`/api/orders/${encodeURIComponent(ref)}/pay`, {
+        method: "POST",
+        body: { email, method: methodId },
+      });
+      if (result.paid) {
+        toast("Payment already confirmed — access unlocked.");
+        await load(email, true);
+        return;
+      }
+      startPayment(result, email);
+    } catch (err) {
+      toast(err.message, "bad");
+    } finally {
+      setPaying("");
+    }
+  }
 
   async function submitUtr(event) {
     event.preventDefault();
@@ -549,8 +622,8 @@ export function OrderPage({ reference }) {
         <div className="pay-banner failed">
           <strong>Payment did not complete.</strong>{" "}
           {reason === "hash_mismatch"
-            ? "We could not verify the gateway response, so nothing was charged twice — try again or pay by UPI."
-            : "No access was unlocked. You can retry or pay by UPI and submit the reference."}
+            ? "We could not verify the gateway response, so nothing was unlocked and nothing was charged twice — try again below."
+            : "No access was unlocked and nothing was charged. You can retry the payment below."}
         </div>
       ) : null}
       <div className="order-head">
@@ -558,7 +631,8 @@ export function OrderPage({ reference }) {
           <span className="eyebrow">order {order.ref}</span>
           <h1>{order.title}</h1>
           <p className="muted">
-            Placed {prettyDateTime(order.created_at)} · {money(order.amount)}
+            Placed {prettyDateTime(order.created_at)} · {orderMoney}
+            {order.currency && order.currency !== "INR" ? ` (${order.currency})` : ""}
           </p>
           {order.discount ? (
             <p className="field-hint">
@@ -597,6 +671,11 @@ export function OrderPage({ reference }) {
                 </a>
               ) : null}
               <p className="field-hint">Downloaded {order.downloads} time(s) · {order.email}</p>
+              <p className="field-hint">
+                {data.payment?.emailSent
+                  ? `✿ PDF + receipt emailed to ${order.email}.`
+                  : "Your PDF is available here. Add a mail key in Admin → Payments to also email it automatically."}
+              </p>
             </>
           ) : (
             <>
@@ -644,17 +723,35 @@ export function OrderPage({ reference }) {
               <dt>Paid on</dt>
               <dd>{order.paid_at ? prettyDateTime(order.paid_at) : "—"}</dd>
             </div>
+            <div>
+              <dt>Amount</dt>
+              <dd>{orderMoney}{order.currency && order.currency !== "INR" ? ` (${order.currency})` : ""}</dd>
+            </div>
           </dl>
-          {!paid ? (
+          {!paid && methods.length ? (
+            <div className="pay-now">
+              <p className="field-hint">
+                Pay exactly {orderMoney} — nothing unlocks until the gateway confirms the payment itself.
+              </p>
+              {methods.map((row, index) => (
+                <Button
+                  key={row.id}
+                  className="btn-block"
+                  variant={index === 0 ? "primary" : "secondary"}
+                  loading={paying === row.id}
+                  onClick={() => payWith(row.id)}
+                >
+                  Pay {orderMoney} with {row.label}
+                </Button>
+              ))}
+              <p className="field-hint">Your order reference stays the same — no duplicate charge.</p>
+            </div>
+          ) : null}
+          {!paid && !methods.length && (data.payment?.link || data.payment?.upi) ? (
             <div className="pay-now">
               {data.payment?.link ? (
-                <a
-                  className="btn btn-primary btn-block"
-                  href={data.payment.link}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Pay {money(order.amount)} on the secure link →
+                <a className="btn btn-primary btn-block" href={data.payment.link} target="_blank" rel="noreferrer">
+                  Pay {orderMoney} on the secure link →
                 </a>
               ) : null}
               {data.payment?.upi ? (
@@ -665,20 +762,18 @@ export function OrderPage({ reference }) {
                 </div>
               ) : null}
               {data.payment?.instructions ? <p className="field-hint">{data.payment.instructions}</p> : null}
+              <form onSubmit={submitUtr} className="utr-form">
+                <Field
+                  label="Paste UTR / transaction reference"
+                  hint="Only needed for a UPI transfer. Gateway payments unlock automatically."
+                >
+                  <Input value={utr} onChange={(event) => setUtr(event.target.value)} placeholder="e.g. 423187654321" />
+                </Field>
+                <Button type="submit" variant="secondary" size="sm">
+                  Submit for verification
+                </Button>
+              </form>
             </div>
-          ) : null}
-          {!paid ? (
-            <form onSubmit={submitUtr} className="utr-form">
-              <Field
-                label="Paste UTR / transaction reference"
-                hint="Found in your UPI app under payment details. We verify manually, usually within a few hours."
-              >
-                <Input value={utr} onChange={(event) => setUtr(event.target.value)} placeholder="e.g. 423187654321" />
-              </Field>
-              <Button type="submit" variant="secondary" size="sm">
-                Submit for verification
-              </Button>
-            </form>
           ) : null}
           {data.refund ? (
             <p className="field-hint">

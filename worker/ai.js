@@ -9,29 +9,49 @@ export const PROVIDER_CATALOG = {
     label: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
     envKeys: ["GROQ_API_KEY", "GROQ_KEY"],
-    // Each model carries its own free-tier quota, so the list doubles as the
-    // quota fallback. The Llama models left Groq's free tier on 2026-08-16 and
-    // now answer 403 for self-serve keys, so only production models are listed.
-    models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-safeguard-20b"],
+    // Strongest first: the 120B gpt-oss is the most capable, fastest model on
+    // Groq's free tier (verified against /v1/models and a live completion). The
+    // list doubles as the per-model quota fallback.
+    models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b"],
     jsonMode: true,
   },
   openrouter: {
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     envKeys: ["OPENROUTER_API_KEY", "OPENROUTER_KEY"],
-    // OpenRouter retires free slugs without notice, so keep these to ids that
-    // currently answer from https://openrouter.ai/api/v1/models.
+    // OpenRouter retires free slugs without notice, so these were re-verified
+    // against /api/v1/models and real completions. Ordered biggest model first:
+    // Nemotron 3 Ultra (550B) writes the strongest copy, then Ernie 5.5, then
+    // Particle. Each one answers with reasoning_effort=low so the whole budget
+    // is not spent thinking.
     models: [
-      "inclusionai/ling-3.2-flash:free",
-      "particle-ai/particle-1:free",
-      "google/gemma-4-26b-a4b-it:free",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
       "baidu/ernie-5.5-flash-preview:free",
+      "particle-ai/particle-1:free",
       "nvidia/nemotron-3.5-lightning:free",
-      "liquid/lfm-3-1.7b:free",
+      "inclusionai/ling-3.2-flash:free",
+      "recursive/flint-v1.0:free",
     ],
     jsonMode: false,
   },
 };
+
+// Model ids we previously shipped that no longer answer (retired free slugs or
+// models that left the free tier). Saved configs are cleaned of these on boot so
+// an old install stops trying dead models before the strong current ones.
+export const RETIRED_MODELS = new Set([
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "deepseek/deepseek-chat-v3-0324:free",
+  "deepseek/deepseek-r1-0528:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "qwen/qwen3-235b-a22b:free",
+  "mistralai/mistral-small-3.2-24b-instruct:free",
+  "google/gemma-3-27b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free",
+  "liquid/lfm-3-1.7b:free",
+]);
 
 export class AiError extends Error {
   constructor(message, attempts = []) {
@@ -163,9 +183,9 @@ export function aiStatus(settings = {}, env = {}) {
 
 /* --------------------------------- core --------------------------------- */
 
-// gpt-oss models are reasoning models: without a low effort setting they spend
-// the entire max_tokens budget thinking and return an empty message.
-const needsLowReasoning = (model) => /gpt-oss/i.test(String(model || ""));
+// gpt-oss and Nemotron models are reasoning models: without a low effort setting
+// they spend the entire max_tokens budget thinking and return an empty message.
+const needsLowReasoning = (model) => /gpt-oss|nemotron/i.test(String(model || ""));
 
 async function fetchWithTimeout(url, options, ms) {
   const controller = new AbortController();
@@ -252,10 +272,12 @@ export async function aiChat({
         } catch {
           detail = "";
         }
-        // Some models reject response_format — retry once without it.
-        if (json && body.response_format && response.status === 400 && /response_format|json/i.test(detail)) {
+        // Some models reject response_format or reasoning_effort — retry once
+        // without the optional parameters instead of skipping a good model.
+        if (response.status === 400 && (body.response_format || body.reasoning_effort)) {
           const retryBody = { ...body };
           delete retryBody.response_format;
+          delete retryBody.reasoning_effort;
           try {
             const retry = await fetchWithTimeout(
               `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`,
@@ -296,11 +318,11 @@ export async function aiChat({
       let text = extractText(data);
       // A reasoning model that ran out of budget returns no content at all. Give
       // it a bigger allowance once instead of treating it as a dead model.
-      if (!text && data?.choices?.[0]?.finish_reason === "length" && maxTokens < 4000) {
+      if (!text && data?.choices?.[0]?.finish_reason === "length" && maxTokens < 6000) {
         try {
           const retry = await fetchWithTimeout(
             `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`,
-            { method: "POST", headers, body: JSON.stringify({ ...body, max_tokens: Math.min(4000, Math.max(600, maxTokens * 8)) }) },
+            { method: "POST", headers, body: JSON.stringify({ ...body, max_tokens: Math.min(6000, Math.max(1200, maxTokens * 8)) }) },
             timeout
           );
           if (retry.ok) text = extractText(await retry.json());

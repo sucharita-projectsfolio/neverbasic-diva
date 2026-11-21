@@ -15,6 +15,7 @@ import {
   WishlistPage,
 } from "./pages/Extras.jsx";
 import Admin from "./admin/Admin.jsx";
+import AccountPage from "./pages/Account.jsx";
 
 function setMeta(name, content) {
   if (!content) return;
@@ -53,7 +54,7 @@ function OfferClock({ endsAt, label }) {
 }
 
 function Nav() {
-  const { site } = useSite();
+  const { site, pricing, currency, setCurrency } = useSite();
   const path = usePath();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -124,6 +125,23 @@ function Nav() {
                 ♡{wishlist.length ? <span className="nav-wish-count">{wishlist.length}</span> : null}
               </Link>
             ) : null}
+            <Link to="/account" className={`nav-icon${path === "/account" ? " active" : ""}`} aria-label="Your account">
+              ◍
+            </Link>
+            {pricing?.currencies?.length > 1 ? (
+              <select
+                className="nav-currency"
+                value={currency || "INR"}
+                onChange={(event) => setCurrency(event.target.value)}
+                aria-label="Show prices in"
+              >
+                {pricing.currencies.map((row) => (
+                  <option key={row.code} value={row.code}>
+                    {row.code}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Link to="/ebooks" className="btn btn-primary btn-sm nav-cta">
               {fillTokens(content.nav_cta, tokens)}
             </Link>
@@ -170,6 +188,7 @@ function Footer() {
           <Link to="/resell">{content.nav_resell}</Link>
           <Link to="/request">{content.footer_link_request}</Link>
           <Link to="/track">{content.footer_link_track}</Link>
+          <Link to="/account">Your account</Link>
         </div>
         <div className="footer-col">
           <h5>{content.footer_care}</h5>
@@ -209,6 +228,7 @@ function Routes() {
   if (clean.startsWith("/checkout/")) return <Checkout ebookId={clean.slice("/checkout/".length)} />;
   if (clean.startsWith("/order/")) return <OrderPage reference={clean.slice("/order/".length)} />;
   if (clean === "/track") return <TrackPage />;
+  if (clean === "/account") return <AccountPage />;
   if (clean === "/search") return <SearchPage />;
   if (clean === "/wishlist") return <WishlistPage />;
   if (clean === "/journal") return <JournalPage />;

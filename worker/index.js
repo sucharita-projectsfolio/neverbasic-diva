@@ -13,7 +13,21 @@ import {
   siteExtras,
   validateCoupon,
 } from "./features.js";
-import { gatewayState, initiatePayment, retrieveStripeSession, verifyRazorpay, verifyStripeSignature, normaliseGatewaySettings } from "./payments.js";
+import {
+  capturePaypalOrder,
+  gatewayState,
+  initiatePayment,
+  normaliseGatewaySettings,
+  paymentMethods,
+  paypalCaptureResult,
+  retrieveStripeSession,
+  verifyPaypalWebhook,
+  verifyRazorpay,
+  verifyStripeSignature,
+} from "./payments.js";
+import { accountRoute, customerFromRequest } from "./accounts.js";
+import { convertFromInr, countryOf, formatMoney, pricingState, readRates, resolveCurrency } from "./currency.js";
+import { MAX_ATTACHMENT_BYTES, bytesToBase64, deliveryEmailHtml, mailConfig, receiptPdf, sendMail } from "./mailer.js";
 
 const ADMIN_COOKIE = "nbd_admin";
 const PUBLIC_KEYS = [
@@ -66,11 +80,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com",
+  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com",
   "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://checkout.stripe.com",
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self' https://secure.payu.in https://test.payu.in https://checkout.stripe.com",
+  "form-action 'self' https://secure.payu.in https://test.payu.in https://checkout.stripe.com https://www.paypal.com https://www.sandbox.paypal.com",
 ].join("; ");
 
 function withSecurityHeaders(response) {
@@ -87,7 +101,7 @@ function withSecurityHeaders(response) {
   return out;
 }
 
-const CROSS_SITE_CALLBACKS = ["/api/payu/return", "/api/payu/webhook", "/api/stripe/webhook"];
+const CROSS_SITE_CALLBACKS = ["/api/payu/return", "/api/payu/webhook", "/api/stripe/webhook", "/api/paypal/webhook"];
 
 // CSRF guard: every state-changing request must come from our own origin (or from
 // a machine client with no Origin header, e.g. webhooks — those are signature
@@ -116,10 +130,12 @@ async function handleApi(request, env, url) {
 
   if (path === "/api/health") return U.json({ ok: true });
 
+  if (path.startsWith("/api/account")) return accountRoute(request, env, url);
+
   const featureResponse = await publicRoute(request, env, url);
   if (featureResponse) return featureResponse;
 
-  if (path === "/api/site" && method === "GET") return sitePayload(env);
+  if (path === "/api/site" && method === "GET") return sitePayload(env, request);
   if (path === "/api/track" && method === "POST") return trackVisit(env, request);
 
   if (path === "/api/orders" && method === "POST") return createOrder(env, request);
@@ -129,6 +145,9 @@ async function handleApi(request, env, url) {
 
   m = path.match(/^\/api\/orders\/([^/]+)\/claim$/);
   if (m && method === "POST") return claimPayment(env, decodeURIComponent(m[1]), request);
+
+  m = path.match(/^\/api\/orders\/([^/]+)\/pay$/);
+  if (m && method === "POST") return retryPayment(env, decodeURIComponent(m[1]), request);
 
   m = path.match(/^\/api\/download\/([^/]+)$/);
   if (m && method === "GET") return deliverDownload(env, decodeURIComponent(m[1]), url);
@@ -141,6 +160,8 @@ async function handleApi(request, env, url) {
   if (path === "/api/razorpay/verify" && method === "POST") return razorpayVerify(env, request);
   if (path === "/api/stripe/return" && method === "GET") return stripeReturn(env, request, url);
   if (path === "/api/stripe/webhook" && method === "POST") return stripeWebhook(env, request);
+  if (path === "/api/paypal/return" && method === "GET") return paypalReturn(env, request, url);
+  if (path === "/api/paypal/webhook" && method === "POST") return paypalWebhook(env, request);
 
   m = path.match(/^\/api\/media\/(.+)$/);
   if (m && method === "GET") return serveMedia(env, decodeURIComponent(m[1]));
@@ -178,7 +199,7 @@ async function handleApi(request, env, url) {
 
 /* --------------------------------- site ---------------------------------- */
 
-async function sitePayload(env) {
+async function sitePayload(env, request) {
   const db = env.DB;
   const settings = await getSettings(db);
   const ebooks = await db
@@ -198,9 +219,12 @@ async function sitePayload(env) {
     link: (settings.payment_link || "").trim(),
     upi: (settings.upi_id || "").trim(),
   };
+  pub.payment = gatewayState(settings).public;
   const extras = await siteExtras(env, settings);
+  const priced = pricingState(settings, countryOf(request, env));
   return U.json({
     settings: pub,
+    pricing: { ...priced, methods: paymentMethods(settings, priced.default) },
     blocks: safeJson(settings.site_blocks, []),
     content: safeJson(settings.site_content, {}),
     theme: safeJson(settings.site_theme, {}),
@@ -312,6 +336,13 @@ async function createOrder(env, request) {
   }
 
   const now = new Date();
+  const country = countryOf(request, env);
+  const currency = resolveCurrency(settings, body.currency, country);
+  const rates = readRates(settings);
+  const amountCharged = convertFromInr(amount, currency, rates);
+  const methods = paymentMethods(settings, currency);
+  const requestedMethod = U.clean(body.method, 20).toLowerCase();
+  const method = methods.some((entry) => entry.id === requestedMethod) ? requestedMethod : methods[0]?.id || "";
   const ref = `NBD-${now.toISOString().slice(2, 10).replace(/-/g, "")}-${U.hex(3).toUpperCase()}`;
   const meta = {
     instagram: U.clean(body.instagram, 60),
@@ -320,42 +351,78 @@ async function createOrder(env, request) {
     ...purchase.meta,
     coupon: coupon ? { code: coupon.code, label: coupon.label, discount: coupon.discount } : null,
     discount: coupon ? coupon.discount : 0,
+    origin: U.originOf(request),
   };
   const resellerCode = U.clean(body.res, 24);
+  let customerId = "";
+  try {
+    const account = await customerFromRequest(env, request);
+    if (account && String(account.email).toLowerCase() === email) customerId = account.id;
+  } catch {
+    /* accounts table not migrated yet — checkout still works */
+  }
 
   await db
     .prepare(
-      `INSERT INTO orders (id, ref, kind, ebook_id, item_title, name, email, phone, amount, status, payment_mode, utr, payu_txnid, payu_mode, download_token, downloads, reseller_code, meta, notes, created_at, paid_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', ?, 0, ?, ?, '', ?, '')`
+      `INSERT INTO orders (id, ref, kind, ebook_id, item_title, name, email, phone, amount, amount_charged, currency, country, status, payment_mode, utr, payu_txnid, payu_mode, gateway_order_id, download_token, downloads, reseller_code, customer_id, meta, notes, email_sent_at, created_at, paid_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', '', ?, 0, ?, ?, ?, '', '', ?, '')`
     )
     .bind(
-      U.hex(8), ref, kind, ebook ? ebook.id : "", itemTitle, name, email, phone, amount,
-      gatewayState(settings).primary || "manual",
-      U.hex(12), resellerCode, JSON.stringify(meta), now.toISOString()
+      U.hex(8), ref, kind, ebook ? ebook.id : "", itemTitle, name, email, phone, amount, amountCharged, currency, country,
+      method || "manual", U.hex(12), resellerCode, customerId, JSON.stringify(meta), now.toISOString()
     )
     .run();
 
-  await logEvent(db, ref, "created", `${kind === "ebook" ? "Ebook" : "Resell licence"} order created · ${U.money(amount)}`);
+  await logEvent(
+    db,
+    ref,
+    "created",
+    `${kind === "ebook" ? "Ebook" : kind === "bundle" ? "Bundle" : "Resell licence"} order created · ${formatMoney(amountCharged, currency)} (${currency})`
+  );
 
   if (coupon) {
     await db.prepare("UPDATE coupons SET used = used + 1 WHERE id = ?").bind(coupon.couponId).run();
   }
   const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
   const origin = U.originOf(request);
-  const payload = await paymentInitiation(env, settings, order, origin);
+  const payload = await paymentInitiation(env, settings, order, origin, method);
   // Remember the gateway-side order id so a verification callback can never be
   // replayed against a different (more expensive) order reference.
-  if (payload.orderId && payload.mode === "razorpay") {
-    await db.prepare("UPDATE orders SET payu_txnid = ?, payu_mode = 'razorpay' WHERE ref = ?").bind(payload.orderId, ref).run();
-  }
-  if (payload.sessionId && payload.mode === "stripe") {
-    await db.prepare("UPDATE orders SET payu_txnid = ?, payu_mode = 'stripe' WHERE ref = ?").bind(payload.sessionId, ref).run();
+  if (payload.gatewayOrderId) {
+    await db
+      .prepare("UPDATE orders SET gateway_order_id = ?, payment_mode = ?, payu_mode = ? WHERE ref = ?")
+      .bind(payload.gatewayOrderId, payload.method || payload.mode || method, payload.mode || "", ref)
+      .run();
+  } else if (payload.method) {
+    await db.prepare("UPDATE orders SET payment_mode = ? WHERE ref = ?").bind(payload.method, ref).run();
   }
   return U.json(payload);
 }
 
-async function paymentInitiation(env, settings, order, origin) {
-  return initiatePayment(env, settings, order, origin);
+async function paymentInitiation(env, settings, order, origin, method) {
+  return initiatePayment(env, settings, order, origin, method);
+}
+
+// A pending order can restart checkout with any method that fits its currency.
+async function retryPayment(env, ref, request) {
+  const db = env.DB;
+  const body = await readJson(request);
+  const email = U.clean(body.email, 160).toLowerCase();
+  const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+  if (!order) return U.bad("Order not found", 404);
+  if (String(order.email).toLowerCase() !== email) return U.bad("Email does not match this order.", 403);
+  if (order.status === "paid") return U.json({ ok: true, paid: true, redirect: `/order/${encodeURIComponent(ref)}?pay=success` });
+  if (order.status === "refunded" || order.status === "cancelled") return U.bad("This order is closed. Start a new one.");
+  const settings = await getSettings(db);
+  const payload = await initiatePayment(env, settings, order, U.originOf(request), U.clean(body.method, 20));
+  if (payload.gatewayOrderId) {
+    await db
+      .prepare("UPDATE orders SET gateway_order_id = ?, payment_mode = ?, payu_mode = ? WHERE ref = ?")
+      .bind(payload.gatewayOrderId, payload.method || payload.mode, payload.mode || "", ref)
+      .run();
+  }
+  await logEvent(db, ref, "payment_started", `${payload.method || payload.mode} checkout started · ${formatMoney(payload.amountCharged, payload.currency)}`);
+  return U.json(payload);
 }
 
 async function orderLookup(env, ref, url) {
@@ -393,12 +460,18 @@ async function orderLookup(env, ref, url) {
   }
   const refund = await db.prepare("SELECT ref, status FROM refunds WHERE order_ref = ?").bind(ref).first();
   const settings = await getSettings(db);
+  const orderCurrency = String(order.currency || "INR").toUpperCase();
+  const methods = paymentMethods(settings, orderCurrency);
   return U.json({
     payment: {
       link: order.status === "paid" ? "" : settings.payment_link || "",
       upi: settings.upi_id || "",
       instructions: settings.pay_instructions || "",
       payu: settings.payu_enabled === "1",
+      paypal: settings.paypal_enabled === "1",
+      methods: order.status === "paid" ? [] : methods,
+      defaultMethod: methods[0]?.id || "",
+      emailSent: Boolean(order.email_sent_at),
     },
     order: {
       ref: order.ref,
@@ -409,6 +482,8 @@ async function orderLookup(env, ref, url) {
       email: order.email,
       phone: order.phone,
       amount: order.amount,
+      amountCharged: Number(order.amount_charged) || Number(order.amount) || 0,
+      currency: orderCurrency,
       status: order.status,
       paymentMode: order.payment_mode,
       utr: order.utr,
@@ -444,6 +519,9 @@ async function claimPayment(env, ref, request) {
   if (!order) return U.bad("Order not found", 404);
   if (email && email !== String(order.email).toLowerCase()) return U.bad("Email does not match this order.", 403);
   if (order.status === "paid") return U.json({ ok: true, status: "paid" });
+  if (["paypal", "payu", "razorpay", "stripe"].includes(String(order.payment_mode || "").toLowerCase())) {
+    return U.bad("This order is on an automatic gateway. Use the payment button on your order page — nothing needs to be pasted.", 409);
+  }
   await db
     .prepare("UPDATE orders SET utr = ?, payment_mode = 'manual', notes = ? WHERE ref = ?")
     .bind(utr, "Payment reference submitted by buyer", ref)
@@ -452,16 +530,24 @@ async function claimPayment(env, ref, request) {
   return U.json({ ok: true, status: "pending" });
 }
 
-async function markOrderPaid(db, ref, { txnid = "", mode = "", note = "" } = {}) {
+async function markOrderPaid(env, db, ref, { txnid = "", mode = "", note = "" } = {}) {
   const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
   if (!order) return null;
   if (order.status === "paid") return order;
   const token = order.download_token || U.hex(12);
   await db
     .prepare(
-      "UPDATE orders SET status = 'paid', paid_at = ?, download_token = ?, payu_txnid = ?, payu_mode = ?, notes = ? WHERE ref = ?"
+      "UPDATE orders SET status = 'paid', paid_at = ?, download_token = ?, payu_txnid = ?, payu_mode = ?, payment_mode = ?, notes = ? WHERE ref = ?"
     )
-    .bind(new Date().toISOString(), token, txnid || order.payu_txnid || "", mode || order.payu_mode || "", note || order.notes || "", ref)
+    .bind(
+      new Date().toISOString(),
+      token,
+      txnid || order.payu_txnid || "",
+      mode || order.payu_mode || "",
+      mode || order.payment_mode || "",
+      note || order.notes || "",
+      ref
+    )
     .run();
   await logEvent(db, ref, "paid", note || "Payment confirmed — access unlocked");
   if (order.kind === "resell") await activateReseller(db, order);
@@ -471,7 +557,86 @@ async function markOrderPaid(db, ref, { txnid = "", mode = "", note = "" } = {})
       .bind(order.reseller_code)
       .run();
   }
-  return db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+  const paid = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+  await deliverOrderEmail(env, paid).catch((error) => console.error("order_email_failed", ref, error && error.message));
+  return paid;
+}
+
+// Emails the bought PDF(s) plus a PDF receipt. Never blocks the unlock: if the
+// mail provider is not configured, the order timeline records why and the buyer
+// still downloads from the order page.
+async function deliverOrderEmail(env, order) {
+  if (!order) return;
+  const db = env.DB;
+  const settings = await getSettings(db);
+  if (settings.email_receipts === "0") return;
+  if (order.email_sent_at) return;
+  const meta = safeJson(order.meta, {});
+  const ids = Array.isArray(meta.ebookIds) && meta.ebookIds.length ? meta.ebookIds : order.ebook_id ? [order.ebook_id] : [];
+  const origin = String(meta.origin || settings.site_url || "").replace(/\/$/, "");
+  const orderUrl = origin ? `${origin}/order/${encodeURIComponent(order.ref)}` : `/order/${encodeURIComponent(order.ref)}`;
+  const receiptUrl = origin
+    ? `${origin}/api/receipt/${encodeURIComponent(order.ref)}?email=${encodeURIComponent(order.email)}`
+    : `/api/receipt/${encodeURIComponent(order.ref)}?email=${encodeURIComponent(order.email)}`;
+  const config = mailConfig(settings, env);
+  const amountLabel = formatMoney(
+    Number(order.amount_charged) || Number(order.amount) || 0,
+    order.currency || "INR"
+  );
+  const items = [];
+  const attachments = [];
+  let attachedBytes = 0;
+  for (const id of ids.slice(0, 3)) {
+    const ebook = await db.prepare("SELECT id, title, file_key, file_name, file_size FROM ebooks WHERE id = ?").bind(id).first();
+    if (!ebook) continue;
+    const downloadUrl = origin
+      ? `${origin}/api/download/${order.download_token}?item=${encodeURIComponent(ebook.id)}`
+      : `/api/download/${order.download_token}?item=${encodeURIComponent(ebook.id)}`;
+    items.push({ title: ebook.title, downloadUrl });
+    if (!config.ready || !env.FILES || !ebook.file_key || String(ebook.file_key).startsWith("demo:")) continue;
+    try {
+      const object = await env.FILES.get(ebook.file_key);
+      if (!object) continue;
+      const buffer = await new Response(object.body).arrayBuffer();
+      if (buffer.byteLength > MAX_ATTACHMENT_BYTES || attachedBytes + buffer.byteLength > 15 * 1024 * 1024) continue;
+      attachments.push({
+        filename: ebook.file_name || `${ebook.title}.pdf`,
+        content: bytesToBase64(buffer),
+      });
+      attachedBytes += buffer.byteLength;
+    } catch {
+      /* a missing attachment must not stop the email or the order */
+    }
+  }
+  const receipt = receiptPdf({ settings, order, meta, amountLabel, brand: settings.brand_name || "Neverbasic Diva" });
+  attachments.push({ filename: `receipt-${order.ref}.pdf`, content: bytesToBase64(receipt) });
+
+  if (!config.ready) {
+    await logEvent(db, order.ref, "email_skipped", "Order unlocked — add a Resend key in Admin → Payments to email receipts");
+    return;
+  }
+  try {
+    await sendMail(config, {
+      to: order.email,
+      subject: `Your ${order.item_title || "ebook"} is ready · ${order.ref}`,
+      html: deliveryEmailHtml({
+        settings,
+        order,
+        items,
+        downloadUrl: orderUrl,
+        receiptUrl,
+        amountLabel,
+        brand: settings.brand_name || "Neverbasic Diva",
+      }),
+      attachments,
+    });
+    await db.prepare("UPDATE orders SET email_sent_at = ? WHERE ref = ?").bind(new Date().toISOString(), order.ref).run();
+    await logEvent(db, order.ref, "email_sent", `PDF + receipt emailed to ${order.email}`);
+  } catch (error) {
+    // A mail outage must never revoke an unlock the gateway already confirmed.
+    await logEvent(db, order.ref, "email_failed", String(error.message || error).slice(0, 180));
+    console.error("order_email_failed", order.ref, error && error.message);
+  }
 }
 
 async function payuReturn(request, env, isWebhook = false) {
@@ -496,7 +661,7 @@ async function payuReturn(request, env, isWebhook = false) {
   if (isWebhook) {
     if (ref && status === "success") {
       const valid = await U.payuVerifyResponse(fields, salt);
-      if (valid) await markOrderPaid(db, ref, { txnid: fields.m_payment_id || "", mode: "payu", note: "Confirmed by PayU webhook" });
+      if (valid) await markOrderPaid(env, db, ref, { txnid: fields.m_payment_id || "", mode: "payu", note: "Confirmed by PayU webhook" });
       else if (ref) await logEvent(db, ref, "verify_failed", "PayU webhook hash did not verify");
     }
     return U.json({ ok: true });
@@ -517,11 +682,12 @@ async function payuReturn(request, env, isWebhook = false) {
     await logEvent(db, ref, "verify_failed", "Response hash did not match — order left pending");
   } else if (status === "success") {
     const paidAmount = Number(fields.amount || 0);
-    if (Number(paidAmount.toFixed(2)) < Number(Number(order.amount).toFixed(2))) {
+    const expected = Number(Number(order.amount_charged || order.amount).toFixed(2));
+    if (Number(paidAmount.toFixed(2)) < expected) {
       reason = "amount_mismatch";
-      await logEvent(db, ref, "verify_failed", `Paid ${paidAmount} but order is ${order.amount}`);
+      await logEvent(db, ref, "verify_failed", `Paid ${paidAmount} but order is ${expected}`);
     } else {
-      await markOrderPaid(db, ref, {
+      await markOrderPaid(env, db, ref, {
         txnid: fields.m_payment_id || "",
         mode: "payu",
         note: `PayU ${fields.mode || "payment"} · ${fields.m_payment_id || ""}`.trim(),
@@ -1084,7 +1250,7 @@ async function handleAdmin(request, env, url, admin) {
     const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
     if (!order) return U.bad("Order not found", 404);
     if (action === "mark_paid") {
-      await markOrderPaid(db, ref, {
+      await markOrderPaid(env, db, ref, {
         txnid: U.clean(body.txnid, 60),
         mode: order.payment_mode || "manual",
         note: `Marked paid by admin${body.txnid ? ` · ${U.clean(body.txnid, 60)}` : ""}`,
@@ -1115,9 +1281,14 @@ async function handleAdmin(request, env, url, admin) {
     }
     if (action === "resend") {
       const token = order.download_token || U.hex(12);
-      await db.prepare("UPDATE orders SET download_token = ? WHERE ref = ?").bind(token, ref).run();
+      await db.prepare("UPDATE orders SET download_token = ?, email_sent_at = '' WHERE ref = ?").bind(token, ref).run();
       await logEvent(db, ref, "link_refreshed", "Access link refreshed by admin");
-      return U.json({ ok: true, downloadUrl: `/api/download/${token}` });
+      let emailed = false;
+      if (order.status === "paid") {
+        const fresh = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
+        emailed = await deliverOrderEmail(env, fresh).then(() => true).catch(() => false);
+      }
+      return U.json({ ok: true, downloadUrl: `/api/download/${token}`, emailed });
     }
     return U.bad("Unknown action");
   }
@@ -1252,11 +1423,15 @@ async function handleAdmin(request, env, url, admin) {
 
   if (path === "/export/orders.csv" && method === "GET") {
     const rows = await db.prepare("SELECT * FROM orders ORDER BY created_at DESC").all();
-    const header = ["ref", "created_at", "name", "email", "phone", "item", "amount", "status", "mode", "utr", "payu_txnid", "downloads", "paid_at"];
+    const header = ["ref", "created_at", "name", "email", "phone", "item", "amount_inr", "currency", "amount_charged", "country", "status", "mode", "utr", "gateway_txn", "downloads", "paid_at"];
     const lines = [header.join(",")];
     for (const row of rows.results || []) {
       lines.push(
-        [row.ref, row.created_at, row.name, row.email, row.phone, row.item_title, row.amount, row.status, row.payment_mode, row.utr, row.payu_txnid, row.downloads, row.paid_at]
+        [
+          row.ref, row.created_at, row.name, row.email, row.phone, row.item_title, row.amount,
+          row.currency || "INR", row.amount_charged || row.amount, row.country || "", row.status,
+          row.payment_mode, row.utr, row.payu_txnid, row.downloads, row.paid_at,
+        ]
           .map(U.csvCell)
           .join(",")
       );
@@ -1325,7 +1500,7 @@ async function razorpayVerify(env, request) {
   const order = ref ? await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first() : null;
   if (!order) return U.bad("Order not found", 404);
   if (order.status === "paid") return U.json({ ok: true, redirect: `/order/${encodeURIComponent(ref)}?pay=success` });
-  if (!order.payu_txnid || order.payu_txnid !== String(body.razorpay_order_id || "")) {
+  if (!order.gateway_order_id || order.gateway_order_id !== String(body.razorpay_order_id || "")) {
     await logEvent(db, ref, "verify_failed", "Razorpay order id did not match this order");
     return U.bad("Payment does not match this order.", 403);
   }
@@ -1334,7 +1509,7 @@ async function razorpayVerify(env, request) {
     await logEvent(db, ref, "verify_failed", "Razorpay signature did not verify");
     return U.bad("We could not verify that payment.", 403);
   }
-  await markOrderPaid(db, ref, {
+  await markOrderPaid(env, db, ref, {
     txnid: U.clean(body.razorpay_payment_id, 80),
     mode: "razorpay",
     note: `Razorpay payment ${U.clean(body.razorpay_payment_id, 80)}`,
@@ -1356,11 +1531,11 @@ async function stripeReturn(env, request, url) {
   else {
     const session = await retrieveStripeSession(settings, sessionId);
     if (!session) reason = "session_not_found";
-    else if (order.payu_txnid && order.payu_txnid !== sessionId) reason = "session_mismatch";
+    else if (order.gateway_order_id && order.gateway_order_id !== sessionId) reason = "session_mismatch";
     else if (session.payment_status !== "paid") reason = "unpaid";
-    else if (Number(session.amount_total || 0) < Math.round(Number(order.amount) * 100)) reason = "amount_mismatch";
+    else if (Number(session.amount_total || 0) < Math.round(Number(order.amount_charged || order.amount) * 100)) reason = "amount_mismatch";
     else {
-      await markOrderPaid(db, order.ref, {
+      await markOrderPaid(env, db, order.ref, {
         txnid: String(session.payment_intent || session.id || ""),
         mode: "stripe",
         note: `Stripe checkout ${session.id}`,
@@ -1391,8 +1566,115 @@ async function stripeWebhook(env, request) {
     const ref = U.clean(session.client_reference_id || (session.metadata && session.metadata.ref), 60);
     if (ref) {
       const order = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
-      if (order && order.status !== "paid" && Number(session.amount_total || 0) >= Math.round(Number(order.amount) * 100)) {
-        await markOrderPaid(db, ref, { txnid: String(session.payment_intent || session.id || ""), mode: "stripe", note: "Confirmed by Stripe webhook" });
+      if (order && order.status !== "paid" && Number(session.amount_total || 0) >= Math.round(Number(order.amount_charged || order.amount) * 100)) {
+        await markOrderPaid(env, db, ref, { txnid: String(session.payment_intent || session.id || ""), mode: "stripe", note: "Confirmed by Stripe webhook" });
+      }
+    }
+  }
+  return U.json({ received: true });
+}
+
+/* --------------------------------- PayPal --------------------------------- */
+
+async function paypalReturn(env, request, url) {
+  const db = env.DB;
+  const settings = await getSettings(db);
+  const ref = U.clean(url.searchParams.get("ref"), 60);
+  const paypalOrderId = U.clean(url.searchParams.get("token"), 120);
+  const order = ref ? await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first() : null;
+  let outcome = "failed";
+  let reason = "";
+
+  if (!order) {
+    reason = "order_not_found";
+  } else if (order.status === "paid") {
+    outcome = "success";
+  } else if (!paypalOrderId) {
+    reason = "missing_token";
+  } else if (order.gateway_order_id && order.gateway_order_id !== paypalOrderId) {
+    reason = "token_mismatch";
+    await logEvent(db, order.ref, "verify_failed", "PayPal order id did not match this order");
+  } else {
+    try {
+      const captured = await capturePaypalOrder(settings, paypalOrderId);
+      const result = paypalCaptureResult(captured);
+      const expected = Number(Number(order.amount_charged || order.amount).toFixed(2));
+      const paid = Number((result.amount || 0).toFixed(2));
+      if (result.status !== "COMPLETED" || result.captureStatus !== "COMPLETED") reason = "not_completed";
+      else if (result.currency && result.currency !== String(order.currency || "INR").toUpperCase()) reason = "currency_mismatch";
+      else if (!(paid >= expected)) reason = "amount_mismatch";
+      if (reason) {
+        await logEvent(
+          db,
+          order.ref,
+          "verify_failed",
+          `PayPal: ${reason} (paid ${paid} ${result.currency || "?"}, expected ${expected} ${order.currency || "INR"})`
+        );
+      } else {
+        await markOrderPaid(env, db, order.ref, {
+          txnid: result.captureId,
+          mode: "paypal",
+          note: `PayPal capture ${result.captureId} · ${paid} ${result.currency}`,
+        });
+        outcome = "success";
+      }
+    } catch (error) {
+      // A webhook may have captured the payment a second earlier. If the order is
+      // paid, treat it as success instead of failing the buyer's return trip.
+      const fresh = await db.prepare("SELECT status FROM orders WHERE ref = ?").bind(order.ref).first();
+      if (fresh && fresh.status === "paid") outcome = "success";
+      else {
+        reason = "capture_failed";
+        await logEvent(db, order.ref, "verify_failed", `PayPal capture failed: ${String(error.message || error).slice(0, 180)}`);
+      }
+    }
+  }
+
+  const target = `${U.originOf(request)}/order/${encodeURIComponent(ref || "")}?pay=${outcome}${reason ? `&reason=${encodeURIComponent(reason)}` : ""}`;
+  return new Response(null, { status: 303, headers: { location: target, "cache-control": "no-store" } });
+}
+
+async function paypalWebhook(env, request) {
+  const db = env.DB;
+  const settings = await getSettings(db);
+  const raw = await request.text();
+  let valid = false;
+  try {
+    valid = await verifyPaypalWebhook(settings, request.headers, raw);
+  } catch (error) {
+    console.error("paypal_webhook_verify_failed", error && error.message);
+  }
+  if (!valid) {
+    await audit(db, null, "paypal_webhook_rejected", "signature did not verify", request);
+    return U.bad("Invalid signature", 400);
+  }
+  let event = {};
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return U.bad("Invalid payload", 400);
+  }
+  if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+    const resource = event.resource || {};
+    const supplementary = resource.supplementary_data || {};
+    const related = supplementary.related_ids || {};
+    const ref = U.clean(resource.custom_id || resource.invoice_id || "", 60);
+    let order = ref ? await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first() : null;
+    if (!order && related.order_id) {
+      order = await db.prepare("SELECT * FROM orders WHERE gateway_order_id = ?").bind(String(related.order_id)).first();
+    }
+    if (order && order.status !== "paid") {
+      const amount = Number((resource.amount && resource.amount.value) || 0);
+      const currency = String((resource.amount && resource.amount.currency_code) || "").toUpperCase();
+      const expected = Number(order.amount_charged || order.amount) || 0;
+      if (amount >= expected && (!currency || currency === String(order.currency || "INR").toUpperCase())) {
+        await markOrderPaid(env, db, order.ref, {
+          txnid: U.clean(resource.id, 90),
+          mode: "paypal",
+          note: `Confirmed by PayPal webhook · ${U.clean(resource.id, 90)}`,
+        });
+      } else {
+        await logEvent(db, order.ref, "verify_failed", `PayPal webhook amount ${amount} ${currency} did not match ${expected}`);
       }
     }
   }
@@ -1408,15 +1690,8 @@ async function orderReceipt(env, ref, url) {
   if (order.status !== "paid") return U.bad("Receipt is available after payment.", 403);
   const settings = await getSettings(db);
   const meta = safeJson(order.meta, {});
-  const body = U.demoPdf(order.item_title || "Order receipt", `${settings.brand_name || "Neverbasic Diva"} · payment receipt`, [
-    `Order reference: ${order.ref}`,
-    `Buyer: ${order.name} · ${order.email}`,
-    `Amount paid: ${settings.currency_symbol || "₹"}${order.amount}`,
-    meta.discount ? `Coupon ${meta.coupon?.code || ""} saved ${settings.currency_symbol || "₹"}${meta.discount}` : "",
-    `Payment method: ${order.payment_mode || "manual"}${order.payu_txnid ? ` · ${order.payu_txnid}` : ""}`,
-    `Paid on: ${order.paid_at || ""}`,
-    "This receipt confirms a digital product purchase. Your download link lives on your order page.",
-  ]);
+  const amountLabel = formatMoney(Number(order.amount_charged) || Number(order.amount) || 0, order.currency || "INR");
+  const body = receiptPdf({ settings, order, meta, amountLabel, brand: settings.brand_name || "Neverbasic Diva" });
   return new Response(body, {
     headers: {
       "content-type": "application/pdf",

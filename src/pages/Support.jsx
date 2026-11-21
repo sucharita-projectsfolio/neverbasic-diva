@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { api, Link, money, prettyDateTime, useSite } from "../lib/api.jsx";
-import { startPayment } from "../lib/pay.jsx";
+import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
 import {
   Button,
   Chip,
@@ -513,13 +513,16 @@ export function PoliciesPage() {
 /* --------------------------------- resell -------------------------------- */
 
 export function ResellPage() {
-  const { site } = useSite();
+  const { site, currency, pricing, setCurrency } = useSite();
   const toast = useToast();
   const settings = site.settings;
   const [form, setForm] = useState({ name: "", email: "", phone: "", instagram: "", audience: "Under 1k" });
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [method, setMethod] = useState("");
   const price = Number(settings.resell_price || 399);
+  const methods = methodsForCurrency({ ...(settings.payment || {}), ...(site.payment || {}) }, currency);
+  const activeMethod = methods.find((row) => row.id === method) || methods[0] || null;
 
   async function submit(event) {
     event.preventDefault();
@@ -531,10 +534,10 @@ export function ResellPage() {
     try {
       const result = await api("/api/orders", {
         method: "POST",
-        body: { ...form, kind: "resell" },
+        body: { ...form, kind: "resell", currency, method: activeMethod ? activeMethod.id : "" },
       });
-      startPayment(result, form.email);
-      if (result.mode !== "payu") setBusy(false);
+      const mode = startPayment(result, form.email);
+      if (!["payu", "paypal", "stripe", "razorpay"].includes(mode)) setBusy(false);
     } catch (err) {
       toast(err.message, "bad");
       setBusy(false);
@@ -616,8 +619,37 @@ export function ResellPage() {
                   year, but I won't claim authorship or share raw files.
                 </span>
               </label>
+              {pricing?.currencies?.length ? (
+                <div className="pay-currency">
+                  <span>Prices in</span>
+                  <select value={currency || "INR"} onChange={(event) => setCurrency(event.target.value)} aria-label="Currency">
+                    {pricing.currencies.map((row) => (
+                      <option key={row.code} value={row.code}>
+                        {row.code} · {row.symbol}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {methods.length ? (
+                <div className="pay-methods" role="radiogroup" aria-label="Payment method">
+                  {methods.map((row) => (
+                    <button
+                      key={row.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={(activeMethod ? activeMethod.id : "") === row.id}
+                      className={`pay-method${(activeMethod ? activeMethod.id : "") === row.id ? " on" : ""}`}
+                      onClick={() => setMethod(row.id)}
+                    >
+                      <strong>{row.label}</strong>
+                      <small>{row.note}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <Button type="submit" size="lg" loading={busy} className="btn-block">
-                Pay ₹{price} &amp; activate →
+                Pay {money(price)}{activeMethod ? ` with ${activeMethod.label}` : ""} &amp; activate →
               </Button>
             </form>
             <p className="field-hint">

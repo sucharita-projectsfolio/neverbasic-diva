@@ -12,7 +12,7 @@ import {
   useSite,
   useWishlist,
 } from "../lib/api.jsx";
-import { startPayment } from "../lib/pay.jsx";
+import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
 import {
   Button,
   Chip,
@@ -295,7 +295,7 @@ export function JournalPostPage({ slug }) {
 /* --------------------------------- bundles -------------------------------- */
 
 export function BundlePage({ slug }) {
-  const { site } = useSite();
+  const { site, currency, pricing, setCurrency } = useSite();
   const toast = useToast();
   const bundle = (site.bundles || []).find((row) => row.slug === slug);
   const [form, setForm] = useState({ name: "", email: "", phone: "" });
@@ -303,6 +303,7 @@ export function BundlePage({ slug }) {
   const [coupon, setCoupon] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [method, setMethod] = useState("");
 
   useEffect(() => {
     try {
@@ -330,6 +331,8 @@ export function BundlePage({ slug }) {
   }
 
   const total = coupon ? coupon.total : bundle.price;
+  const methods = methodsForCurrency({ ...(site.settings.payment || {}), ...(site.payment || {}) }, currency);
+  const activeMethod = methods.find((row) => row.id === method) || methods[0] || null;
 
   async function applyCode() {
     if (!code.trim()) return;
@@ -351,11 +354,17 @@ export function BundlePage({ slug }) {
       window.localStorage.setItem("nbd:buyer", JSON.stringify(form));
       const result = await api("/api/orders", {
         method: "POST",
-        body: { ...form, bundleId: bundle.id, code: coupon ? coupon.code : "" },
+        body: {
+          ...form,
+          bundleId: bundle.id,
+          code: coupon ? coupon.code : "",
+          currency,
+          method: activeMethod ? activeMethod.id : "",
+        },
       });
       if (result.warning) toast(result.warning, "bad");
-      startPayment(result, form.email);
-      if (result.mode !== "payu" && result.mode !== "razorpay" && result.mode !== "stripe") setBusy(false);
+      const mode = startPayment(result, form.email);
+      if (!["payu", "paypal", "stripe", "razorpay"].includes(mode)) setBusy(false);
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -412,9 +421,39 @@ export function BundlePage({ slug }) {
               </Button>
             </div>
             {coupon ? <p className="field-hint">✓ {coupon.code} · {coupon.label}</p> : null}
+            {pricing?.currencies?.length ? (
+              <div className="pay-currency">
+                <span>Prices in</span>
+                <select value={currency || "INR"} onChange={(event) => setCurrency(event.target.value)} aria-label="Currency">
+                  {pricing.currencies.map((row) => (
+                    <option key={row.code} value={row.code}>
+                      {row.code} · {row.symbol}
+                    </option>
+                  ))}
+                </select>
+                <small>Charged exactly as shown.</small>
+              </div>
+            ) : null}
+            {methods.length ? (
+              <div className="pay-methods" role="radiogroup" aria-label="Payment method">
+                {methods.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={(activeMethod ? activeMethod.id : "") === row.id}
+                    className={`pay-method${(activeMethod ? activeMethod.id : "") === row.id ? " on" : ""}`}
+                    onClick={() => setMethod(row.id)}
+                  >
+                    <strong>{row.label}</strong>
+                    <small>{row.note}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {error ? <p className="form-error">{error}</p> : null}
             <Button type="submit" size="lg" loading={busy} className="btn-block">
-              Pay {money(total)} securely →
+              Pay {money(total)}{activeMethod ? ` with ${activeMethod.label}` : " securely"} →
             </Button>
           </form>
         </div>
@@ -437,11 +476,12 @@ export function BundlePage({ slug }) {
             </div>
           ) : null}
           <div className="summary-total">
-            <span>Total</span>
+            <span>Total {currency ? `(${currency})` : ""}</span>
             <strong>{money(total)}</strong>
           </div>
           <div className="summary-perks">
             <span>✿ Every PDF, instantly</span>
+            <span>✿ Receipt emailed on payment</span>
             <span>✿ One permanent order page</span>
             <span>✿ 100% refund promise</span>
           </div>

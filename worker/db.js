@@ -1,5 +1,7 @@
 // Database schema, default settings and first-run seed content.
 import { hashPassword, hex } from "./util.js";
+import { DEFAULT_RATES } from "./currency.js";
+import { PROVIDER_CATALOG, RETIRED_MODELS } from "./ai.js";
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (
@@ -60,8 +62,33 @@ CREATE TABLE IF NOT EXISTS orders (
   reseller_code TEXT DEFAULT '',
   meta TEXT DEFAULT '{}',
   notes TEXT DEFAULT '',
+  currency TEXT DEFAULT 'INR',
+  amount_charged REAL DEFAULT 0,
+  country TEXT DEFAULT '',
+  gateway_order_id TEXT DEFAULT '',
+  customer_id TEXT DEFAULT '',
+  email_sent_at TEXT DEFAULT '',
   created_at TEXT NOT NULL,
   paid_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS customers (
+  id TEXT PRIMARY KEY,
+  name TEXT DEFAULT '',
+  email TEXT NOT NULL UNIQUE,
+  phone TEXT DEFAULT '',
+  country TEXT DEFAULT '',
+  pass_hash TEXT DEFAULT '',
+  salt TEXT DEFAULT '',
+  firebase_uid TEXT DEFAULT '',
+  status TEXT DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  last_login_at TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS customer_sessions (
+  token TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS order_events (
   id TEXT PRIMARY KEY,
@@ -215,6 +242,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_events_ref ON order_events(order_ref);
 CREATE INDEX IF NOT EXISTS idx_ticket_messages ON ticket_messages(ticket_ref);
+CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+CREATE INDEX IF NOT EXISTS idx_customer_sessions ON customer_sessions(customer_id);
 `;
 
 export const DEFAULT_SETTINGS = {
@@ -238,7 +267,7 @@ export const DEFAULT_SETTINGS = {
   payment_link: "",
   upi_id: "",
   pay_instructions:
-    "Scan the UPI QR or open the payment link, pay the exact amount, then paste the UTR / reference number below. Access unlocks the moment it is verified.",
+    "Pay the exact amount shown on this page. Your download unlocks the second the gateway confirms the payment — no screenshots, no UTR numbers.",
   resell_price: "399",
   resell_enabled: "1",
   resell_commission_note: "You keep 100% of what you charge your buyers. Our ₹399 is a one-time, one-year licence fee.",
@@ -293,7 +322,7 @@ export const DEFAULT_SETTINGS = {
   ai_enabled: "1",
   ai_tone: "sharp, warm, human and specific — direct-response copy without fake claims",
   ai_config:
-    '{"temperature":0.85,"providers":[{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["deepseek/deepseek-chat-v3-0324:free","deepseek/deepseek-r1-0528:free","meta-llama/llama-3.3-70b-instruct:free","qwen/qwen3-235b-a22b:free","mistralai/mistral-small-3.2-24b-instruct:free","google/gemma-3-27b-it:free"]}]}',
+    '{"temperature":0.85,"providers":[{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","nvidia/nemotron-3.5-lightning:free","inclusionai/ling-3.2-flash:free","recursive/flint-v1.0:free"]}]}',
 
   // Storefront feature switches (JSON, edited in Studio → Growth).
   store_features:
@@ -303,6 +332,26 @@ export const DEFAULT_SETTINGS = {
   payment_gateway: "auto",
   currency: "INR",
   currency_symbol: "₹",
+  // Country-aware pricing: prices are stored in INR and converted for the
+  // buyer's country. Rates are "1 unit = X INR" and editable in admin.
+  currency_auto: "1",
+  currency_rates: JSON.stringify(DEFAULT_RATES),
+  paypal_enabled: "0",
+  paypal_client_id: "",
+  paypal_client_secret: "",
+  paypal_mode: "sandbox",
+  paypal_webhook_id: "",
+  // Delivery email (Resend). Without a key the order still unlocks and the
+  // buyer downloads from the order page.
+  resend_api_key: "",
+  mail_from: "",
+  email_receipts: "1",
+  // Customer accounts. Email + password works out of the box; adding a Firebase
+  // web API key also enables Firebase email/password sign-in.
+  customer_accounts: "1",
+  firebase_api_key: "",
+  firebase_project_id: "",
+  site_url: "",
   razorpay_enabled: "0",
   razorpay_key_id: "",
   razorpay_key_secret: "",
@@ -325,6 +374,18 @@ export const MIGRATION_ALTERS = [
   "ALTER TABLE ebooks ADD COLUMN ai_meta TEXT DEFAULT '{}'",
   "ALTER TABLE ebooks ADD COLUMN sample TEXT DEFAULT ''",
   "ALTER TABLE ebooks ADD COLUMN tags TEXT DEFAULT '[]'",
+  "ALTER TABLE orders ADD COLUMN currency TEXT DEFAULT 'INR'",
+  "ALTER TABLE orders ADD COLUMN amount_charged REAL DEFAULT 0",
+  "ALTER TABLE orders ADD COLUMN country TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN gateway_order_id TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN customer_id TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN email_sent_at TEXT DEFAULT ''",
+  "CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT DEFAULT '', email TEXT NOT NULL UNIQUE, phone TEXT DEFAULT '', country TEXT DEFAULT '', pass_hash TEXT DEFAULT '', salt TEXT DEFAULT '', firebase_uid TEXT DEFAULT '', status TEXT DEFAULT 'active', created_at TEXT NOT NULL, last_login_at TEXT DEFAULT '')",
+  "CREATE TABLE IF NOT EXISTS customer_sessions (token TEXT PRIMARY KEY, customer_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)",
+  "CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id)",
+  // The old copy told buyers to paste a UTR. Gateway payments never need that.
+  "UPDATE settings SET value = 'Pay the exact amount shown on this page. Your download unlocks the second the gateway confirms the payment — no screenshots, no UTR numbers.' WHERE key = 'pay_instructions' AND value LIKE 'Scan the UPI QR%'",
 ];
 
 const SEED_EBOOKS = [
@@ -535,11 +596,39 @@ async function init(env) {
   // .dev.vars locally and in the hosting dashboard for production. The password
   // never lives in the repo. An admin with that email is never rewritten, so a
   // password changed from the panel is not silently reset on the next restart.
+  await refreshAiModels(db);
+
   const ownerEmail = String(env && env.ADMIN_EMAIL ? env.ADMIN_EMAIL : "").trim().toLowerCase();
   const ownerPassword = String(env && env.ADMIN_PASSWORD ? env.ADMIN_PASSWORD : "");
   if (ownerEmail && ownerPassword.length >= 8) {
     const match = await db.prepare("SELECT id FROM admins WHERE LOWER(email) = ?").bind(ownerEmail).first();
     if (!match) await createAdmin(db, ownerEmail, ownerPassword);
+  }
+}
+
+// Drops retired model ids from a saved AI config and, when nothing usable is
+// left, swaps in the current strong catalog. Admin-added live models are kept.
+async function refreshAiModels(db) {
+  try {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'ai_config'").first();
+    if (!row || !row.value) return;
+    const parsed = JSON.parse(row.value);
+    const providers = Array.isArray(parsed.providers) ? parsed.providers : [];
+    let changed = false;
+    for (const provider of providers) {
+      const meta = PROVIDER_CATALOG[provider.id];
+      if (!meta) continue; // custom provider is left exactly as configured
+      const saved = (Array.isArray(provider.models) ? provider.models : []).filter((model) => typeof model === "string" && model.trim());
+      const alive = saved.filter((model) => !RETIRED_MODELS.has(model));
+      if (alive.length === saved.length) continue;
+      provider.models = alive.length ? alive : [...meta.models];
+      changed = true;
+    }
+    if (changed) {
+      await db.prepare("UPDATE settings SET value = ? WHERE key = 'ai_config'").bind(JSON.stringify(parsed)).run();
+    }
+  } catch {
+    // A bad saved value must never stop the store from booting.
   }
 }
 

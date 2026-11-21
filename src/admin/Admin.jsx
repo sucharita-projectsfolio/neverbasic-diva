@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { api, money, prettyDate, prettyDateTime } from "../lib/api.jsx";
+// Admin ledgers always show the INR base, whatever currency the storefront shows.
+import { api, moneyBase as money, prettyDate, prettyDateTime } from "../lib/api.jsx";
 import Studio from "./Studio.jsx";
 import AiStudio from "./AiStudio.jsx";
 import Growth from "./Growth.jsx";
@@ -582,13 +583,21 @@ function Orders({ data, reload }) {
                 {order.item_title}
                 <small className="cell-sub">{order.kind === "resell" ? "Resell licence" : "Ebook"}</small>
               </td>
-              <td>{money(order.amount)}</td>
+              <td>
+                {money(order.amount)}
+                {order.currency && order.currency !== "INR" ? (
+                  <small className="cell-sub">
+                    charged {order.currency} {Number(order.amount_charged || 0).toFixed(2)}
+                  </small>
+                ) : null}
+              </td>
               <td>
                 <StatusPill status={order.status} />
               </td>
               <td>
                 {order.payment_mode}
                 {order.utr ? <small className="cell-sub">UTR {order.utr}</small> : null}
+                {order.country ? <small className="cell-sub">{order.country}</small> : null}
               </td>
               <td>{prettyDate(order.created_at)}</td>
               <td>
@@ -970,21 +979,51 @@ function Payments({ settings, reload }) {
     "payment_gateway",
     "currency",
     "currency_symbol",
+    "currency_auto",
+    "currency_rates",
     "razorpay_enabled",
     "razorpay_key_id",
     "razorpay_key_secret",
     "stripe_enabled",
     "stripe_publishable_key",
     "stripe_secret_key",
+    "paypal_enabled",
+    "paypal_client_id",
+    "paypal_client_secret",
+    "paypal_mode",
+    "paypal_webhook_id",
+    "resend_api_key",
+    "mail_from",
+    "email_receipts",
+    "firebase_api_key",
+    "firebase_project_id",
+    "customer_accounts",
+    "site_url",
   ]);
   const [showSalt, setShowSalt] = useState(false);
   const [showRzp, setShowRzp] = useState(false);
   const [showStripe, setShowStripe] = useState(false);
+  const [showPp, setShowPp] = useState(false);
+  const [showMail, setShowMail] = useState(false);
   const [testState, setTestState] = useState(null);
   const [testBusy, setTestBusy] = useState(false);
   const payuReady = draft.payu_enabled === "1" && draft.payu_key && draft.payu_salt;
   const razorpayReady = draft.razorpay_enabled === "1" && draft.razorpay_key_id && draft.razorpay_key_secret;
   const stripeReady = draft.stripe_enabled === "1" && draft.stripe_secret_key;
+  const paypalReady = draft.paypal_enabled === "1" && draft.paypal_client_id && draft.paypal_client_secret;
+  const rates = useMemo(() => {
+    try {
+      const parsed = JSON.parse(draft.currency_rates || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [draft.currency_rates]);
+  const setRate = (code, value) =>
+    setDraft({
+      ...draft,
+      currency_rates: JSON.stringify({ ...rates, INR: 1, [code]: Number(value) || 0 }),
+    });
   const activeGateway =
     draft.payment_gateway && draft.payment_gateway !== "auto"
       ? draft.payment_gateway
@@ -1076,6 +1115,72 @@ function Payments({ settings, reload }) {
           </p>
           <p className="field-hint">
             Webhook endpoint (optional): <code>{`${window.location.origin}/api/payu/webhook`}</code>
+          </p>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="PayPal (worldwide cards & wallets)"
+        subtitle="Paste the REST app client id and secret from developer.paypal.com → Apps & Credentials. Buyers outside India pay in their own currency."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save
+          </Button>
+        }
+      >
+        <div className="status-line">
+          <span className={paypalReady ? "dot good" : "dot warn"} />
+          {paypalReady
+            ? `PayPal is ${draft.paypal_mode === "live" ? "LIVE — real payments" : "in sandbox mode"}`
+            : "PayPal is off — buyers outside India will not see a payment button"}
+        </div>
+        <Toggle
+          checked={draft.paypal_enabled === "1"}
+          onChange={(value) => setDraft({ ...draft, paypal_enabled: value ? "1" : "0" })}
+          label="Enable PayPal checkout"
+          hint="Shown for non-INR currencies. The payment is captured and verified server-side before the PDF unlocks."
+        />
+        <div className="two-col">
+          <Field label="Client ID">
+            <Input
+              value={draft.paypal_client_id}
+              onChange={(event) => setDraft({ ...draft, paypal_client_id: event.target.value })}
+              placeholder="AeA1QIZ…"
+            />
+          </Field>
+          <Field label="Secret">
+            <div className="input-with-action">
+              <Input
+                type={showPp ? "text" : "password"}
+                value={draft.paypal_client_secret}
+                onChange={(event) => setDraft({ ...draft, paypal_client_secret: event.target.value })}
+                autoComplete="off"
+              />
+              <button type="button" className="input-action" onClick={() => setShowPp(!showPp)}>
+                {showPp ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+        </div>
+        <div className="two-col">
+          <Field label="Mode">
+            <Select value={draft.paypal_mode} onChange={(event) => setDraft({ ...draft, paypal_mode: event.target.value })}>
+              <option value="sandbox">Sandbox (test)</option>
+              <option value="live">Live</option>
+            </Select>
+          </Field>
+          <Field label="Webhook id (optional)" hint="PayPal → Apps & Credentials → Webhooks. Catches a payment even if the buyer closes the tab.">
+            <Input
+              value={draft.paypal_webhook_id}
+              onChange={(event) => setDraft({ ...draft, paypal_webhook_id: event.target.value })}
+              placeholder="8PT597110X687430LKGECATA"
+            />
+          </Field>
+        </div>
+        <div className="info-block">
+          <p className="field-hint">
+            Return URL: <code>{`${window.location.origin}/api/paypal/return`}</code> · Webhook:{" "}
+            <code>{`${window.location.origin}/api/paypal/webhook`}</code> — add both in the PayPal app.
           </p>
         </div>
       </SectionCard>
@@ -1196,6 +1301,125 @@ function Payments({ settings, reload }) {
       </SectionCard>
 
       <SectionCard
+        title="Countries & currency"
+        subtitle="Prices are stored in ₹ and converted for the buyer's country. Both PayPal (outside India) and PayU/Razorpay/UPI (India) can run at once."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save currency
+          </Button>
+        }
+      >
+        <Toggle
+          checked={draft.currency_auto !== "0"}
+          onChange={(value) => setDraft({ ...draft, currency_auto: value ? "1" : "0" })}
+          label="Detect the buyer's country automatically"
+          hint="A US visitor sees USD, the UK sees GBP, India sees INR. Buyers can still switch currency at checkout."
+        />
+        <Field label="Site URL" hint="Used for links inside emailed receipts, e.g. https://neverbasicdiva.netlify.app">
+          <Input
+            value={draft.site_url}
+            onChange={(event) => setDraft({ ...draft, site_url: event.target.value.trim() })}
+            placeholder="https://your-site.netlify.app"
+          />
+        </Field>
+        <div className="rates-grid">
+          {["USD", "GBP", "EUR", "AED", "AUD", "CAD", "SGD"].map((code) => (
+            <Field key={code} label={`1 ${code} = ₹`}>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={rates[code] ?? ""}
+                onChange={(event) => setRate(code, event.target.value)}
+              />
+            </Field>
+          ))}
+        </div>
+        <p className="field-hint">
+          Update these when the exchange rate moves. The exact converted amount is stored on the order and
+          verified against the gateway response, so a buyer is never charged a different figure.
+        </p>
+      </SectionCard>
+
+      <SectionCard
+        title="Delivery email (PDF + receipt)"
+        subtitle="Every confirmed payment emails the bought PDF and a PDF receipt as attachments, plus a permanent download link."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save email
+          </Button>
+        }
+      >
+        <div className="status-line">
+          <span className={draft.resend_api_key ? "dot good" : "dot warn"} />
+          {draft.resend_api_key
+            ? "Delivery email is connected"
+            : "Add a Resend API key to email PDFs automatically (orders still unlock on the site without it)"}
+        </div>
+        <Toggle
+          checked={draft.email_receipts !== "0"}
+          onChange={(value) => setDraft({ ...draft, email_receipts: value ? "1" : "0" })}
+          label="Email the ebook and receipt after payment"
+          hint="Sent server-side only after the gateway confirms the exact amount."
+        />
+        <div className="two-col">
+          <Field label="Resend API key" hint="resend.com → API Keys. Never sent to the browser.">
+            <div className="input-with-action">
+              <Input
+                type={showMail ? "text" : "password"}
+                value={draft.resend_api_key}
+                onChange={(event) => setDraft({ ...draft, resend_api_key: event.target.value })}
+                autoComplete="off"
+              />
+              <button type="button" className="input-action" onClick={() => setShowMail(!showMail)}>
+                {showMail ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+          <Field label="From address" hint="Must be a domain verified in Resend.">
+            <Input
+              value={draft.mail_from}
+              onChange={(event) => setDraft({ ...draft, mail_from: event.target.value })}
+              placeholder="Neverbasic Diva <orders@yourdomain.com>"
+            />
+          </Field>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Customer accounts & Firebase"
+        subtitle="Buyers get an email + password account with every order, download, receipt and support thread in one place."
+        actions={
+          <Button size="sm" onClick={() => saveSettings(draft, reload, toast)}>
+            Save accounts
+          </Button>
+        }
+      >
+        <Toggle
+          checked={draft.customer_accounts !== "0"}
+          onChange={(value) => setDraft({ ...draft, customer_accounts: value ? "1" : "0" })}
+          label="Let customers create an account"
+          hint="Orders placed with the same email attach to the account automatically."
+        />
+        <div className="two-col">
+          <Field label="Firebase Web API key (optional)" hint="Firebase console → Project settings → Your apps → Web API key. Adds Firebase email/password sign-in.">
+            <Input
+              value={draft.firebase_api_key}
+              onChange={(event) => setDraft({ ...draft, firebase_api_key: event.target.value })}
+              placeholder="AIza…"
+            />
+          </Field>
+          <Field label="Firebase project id (optional)">
+            <Input
+              value={draft.firebase_project_id}
+              onChange={(event) => setDraft({ ...draft, firebase_project_id: event.target.value })}
+              placeholder="my-store-1234"
+            />
+          </Field>
+        </div>
+      </SectionCard>
+
+      <SectionCard
         title="Routing, currency & testing"
         subtitle="Choose which gateway buyers see, set the currency, and verify your keys with one click."
         actions={
@@ -1211,12 +1435,14 @@ function Payments({ settings, reload }) {
       >
         <div className="status-line">
           <span className="dot good" />
-          Buyers will currently pay via <strong>{activeGateway}</strong>
+          Fallback gateway: <strong>{activeGateway}</strong>. Currency decides the buttons — PayPal outside India,
+          PayU/Razorpay in India.
         </div>
         <div className="three-col">
           <Field label="Gateway priority">
             <Select value={draft.payment_gateway || "auto"} onChange={(event) => setDraft({ ...draft, payment_gateway: event.target.value })}>
               <option value="auto">Auto — first one connected</option>
+              <option value="paypal">PayPal</option>
               <option value="payu">PayU</option>
               <option value="razorpay">Razorpay</option>
               <option value="stripe">Stripe</option>

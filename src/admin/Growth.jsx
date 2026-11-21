@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { api, money, prettyDate, prettyDateTime } from "../lib/api.jsx";
+// Admin ledgers stay in the INR base currency.
+import { api, moneyBase as money, prettyDate, prettyDateTime } from "../lib/api.jsx";
 import { FEATURE_LABELS } from "../lib/sitekit.js";
 import { Button, Field, Input, Modal, Select, StatusPill, Textarea, Toggle, useToast } from "../ui.jsx";
 
