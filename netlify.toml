@@ -17,6 +17,11 @@
 # links such as /admin and /track working even when the server entry is not
 # available. They never match /api/*, which is what the server owns.
 [[redirects]]
+  from = "/ebooks"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
   from = "/ebooks/*"
   to = "/index.html"
   status = 200
@@ -28,6 +33,11 @@
 
 [[redirects]]
   from = "/order/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/resell"
   to = "/index.html"
   status = 200
 
