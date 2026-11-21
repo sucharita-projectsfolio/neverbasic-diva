@@ -257,7 +257,10 @@
 .assistant-head small { font-size: 10px; opacity: 0.55; }
 .assistant-log { flex: 1; overflow-y: auto; padding: 14px; display: grid; gap: 9px; }
 .assistant-msg { font-size: 13px; line-height: 1.55; padding: 9px 12px; border-radius: 14px; max-width: 92%; }
-.assistant-msg.assistant { background: color-mix(in srgb, var(--ink) 6%, transparent); border-bottom-left-radius: 4px; }
+/* "assistant" is the widget wrapper and is position:fixed, so a bubble must
+   never carry that class — it would be pulled out of the panel. */
+.assistant-msg.bot { background: color-mix(in srgb, var(--ink) 6%, transparent); border-bottom-left-radius: 4px; }
+.assistant-msg strong { font-weight: 600; }
 .assistant-msg.user { background: var(--accent); color: #fff; justify-self: end; border-bottom-right-radius: 4px; }
 .assistant-msg a { color: inherit; text-decoration: underline; font-weight: 600; }
 .assistant-suggestions { display: grid; gap: 5px; padding: 0 12px 8px; }

@@ -193,7 +193,7 @@ export function SupportPage() {
               </div>
               <div className="messages">
                 {ticket.messages.map((message, index) => (
-                  <div key={index} className={`message ${message.author}`}>
+                  <div key={index} className={`message ${message.author === "admin" ? "from-admin" : "from-customer"}`}>
                     <span className="message-author">{message.author === "admin" ? "Neverbasic Diva" : "You"}</span>
                     <p>{message.body}</p>
                     <small>{prettyDateTime(message.created_at)}</small>

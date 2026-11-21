@@ -656,6 +656,9 @@ ul, ol {
 
 .hero {
   position: relative;
+  /* .hero-grain bleeds past the edges on purpose; without clipping it the
+     whole document scrolls sideways on every screen size. */
+  overflow-x: clip;
   display: grid;
   grid-template-columns: 1.02fr 0.98fr;
   gap: 54px;
@@ -2337,12 +2340,13 @@ ul, ol {
   font-size: 13px;
 }
 
-.message.admin {
+/* not ".admin": that class is the full-height dashboard layout wrapper. */
+.message.from-admin {
   background: color-mix(in srgb, var(--accent) 9%, var(--cream));
   margin-left: 26px;
 }
 
-.message.customer {
+.message.from-customer {
   margin-right: 26px;
 }
 

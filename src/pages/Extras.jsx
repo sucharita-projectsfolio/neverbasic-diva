@@ -676,15 +676,15 @@ function Assistant() {
     }
   }
 
+  // The model answers in light markdown, so turn **bold** into real emphasis
+  // instead of showing the asterisks.
   function render(text) {
-    const parts = String(text).split(/(\/ebooks\/[\w-]+|\/resell|\/support|\/track)/g);
-    return parts.map((part, index) =>
-      part.startsWith("/") ? (
-        <Link key={index} to={part}>{part}</Link>
-      ) : (
-        <React.Fragment key={index}>{part}</React.Fragment>
-      )
-    );
+    const parts = String(text).split(/(\*\*[^*]+\*\*|\/ebooks\/[\w-]+|\/resell|\/support|\/track)/g);
+    return parts.map((part, index) => {
+      if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={index}>{part.slice(2, -2)}</strong>;
+      if (part.startsWith("/")) return <Link key={index} to={part}>{part}</Link>;
+      return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
   }
 
   return (
@@ -702,11 +702,11 @@ function Assistant() {
           </div>
           <div className="assistant-log">
             {messages.map((message, index) => (
-              <div key={index} className={`assistant-msg ${message.role}`}>
+              <div key={index} className={`assistant-msg ${message.role === "assistant" ? "bot" : "user"}`}>
                 {render(message.content)}
               </div>
             ))}
-            {busy ? <div className="assistant-msg assistant">Thinking…</div> : null}
+            {busy ? <div className="assistant-msg bot">Thinking…</div> : null}
           </div>
           {messages.length < 3 ? (
             <div className="assistant-suggestions">
