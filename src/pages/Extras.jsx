@@ -668,7 +668,9 @@ function Assistant() {
       });
       setMessages([...next, { role: "assistant", content: result.reply }]);
     } catch (error) {
-      setMessages([...next, { role: "assistant", content: `${error.message} You can also message us on WhatsApp or use the support form.` }]);
+      const text = String(error.message || "Something went wrong.");
+      const hint = /support|whatsapp/i.test(text) ? "" : " You can also message us on WhatsApp or use the support form.";
+      setMessages([...next, { role: "assistant", content: `${text}${hint}` }]);
     } finally {
       setBusy(false);
     }

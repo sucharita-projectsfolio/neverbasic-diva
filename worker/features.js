@@ -342,8 +342,16 @@ export async function publicRoute(request, env, url) {
       const result = await assistantReply({ settings, env, messages, catalog: ebooks.results || [] });
       return U.json(result);
     } catch (error) {
-      console.error("assistant_failed", error && error.message);
-      return U.bad("The assistant is busy. Try again, or use the support form.", 503);
+      // The attempts carry the real reason (bad key, retired model, empty free
+      // quota), so keep them in the log instead of just "busy".
+      console.error("assistant_failed", error && error.message, JSON.stringify((error && error.attempts) || []));
+      const noProvider = /no ai provider key/i.test(String(error && error.message));
+      return U.bad(
+        noProvider
+          ? "The assistant needs an AI key before it can answer. Add a Groq key in Admin → AI studio, then press Test."
+          : "The assistant is busy right now. Try again in a minute, or use the support form.",
+        503
+      );
     }
   }
 

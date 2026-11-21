@@ -9,20 +9,25 @@ export const PROVIDER_CATALOG = {
     label: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
     envKeys: ["GROQ_API_KEY", "GROQ_KEY"],
-    models: ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    // Each model carries its own free-tier quota, so the list doubles as the
+    // quota fallback. The Llama models left Groq's free tier on 2026-08-16 and
+    // now answer 403 for self-serve keys, so only production models are listed.
+    models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-safeguard-20b"],
     jsonMode: true,
   },
   openrouter: {
     label: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     envKeys: ["OPENROUTER_API_KEY", "OPENROUTER_KEY"],
+    // OpenRouter retires free slugs without notice, so keep these to ids that
+    // currently answer from https://openrouter.ai/api/v1/models.
     models: [
-      "deepseek/deepseek-chat-v3-0324:free",
-      "deepseek/deepseek-r1-0528:free",
-      "meta-llama/llama-3.3-70b-instruct:free",
-      "qwen/qwen3-235b-a22b:free",
-      "mistralai/mistral-small-3.2-24b-instruct:free",
-      "google/gemma-3-27b-it:free",
+      "google/gemma-4-31b-it:free",
+      "inclusionai/ling-3.2-flash:free",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "baidu/ernie-5.5-flash-preview:free",
+      "particle-ai/particle-1:free",
     ],
     jsonMode: false,
   },
@@ -70,10 +75,14 @@ export function readAiConfig(settings = {}, env = {}) {
     const envKey = meta.envKeys.map((key) => env[key]).find((value) => Boolean(value)) || "";
     const savedKey = asString(user.apiKey, 400);
     const apiKey = savedKey || envKey;
-    const models = (Array.isArray(user.models) && user.models.length ? user.models : meta.models)
+    // Saved models first, then any built-in model the admin has not listed.
+    // Existing installs kept a copy of a model list that has since been
+    // retired, and without this top-up every one of their calls fails while a
+    // perfectly good model sits right there in the defaults.
+    const savedModels = (Array.isArray(user.models) ? user.models : [])
       .map((model) => asString(model, 120))
-      .filter(Boolean)
-      .slice(0, 8);
+      .filter(Boolean);
+    const models = [...new Set([...savedModels, ...meta.models])].slice(0, 10);
     providers.push({
       id,
       label: meta.label,
@@ -176,6 +185,7 @@ export async function aiChat({
   temperature,
   maxTokens = 3000,
   timeout = 40000,
+  budget = 90000,
 } = {}) {
   if (settings.ai_enabled === "0") throw new AiError("AI is switched off in Admin → AI studio.");
   const config = readAiConfig(settings, env);
@@ -186,9 +196,14 @@ export async function aiChat({
     );
   }
 
+  // A visitor waiting on the chat widget should get an answer or an error in
+  // seconds, not after every provider has timed out in turn.
+  const stopAt = Date.now() + Math.max(5000, budget);
   const attempts = [];
   for (const provider of usable) {
+    if (attempts.length && Date.now() >= stopAt) break;
     for (const model of provider.models) {
+      if (attempts.length && Date.now() >= stopAt) break;
       const started = Date.now();
       const body = {
         model,
@@ -827,6 +842,8 @@ export async function assistantReply({ settings = {}, env = {}, messages = [], c
     env,
     json: false,
     maxTokens: 450,
+    timeout: 12000,
+    budget: 15000,
     messages: [{ role: "system", content: system }, ...history],
   });
   return { reply: result.text.slice(0, 1200), meta: { provider: result.provider, model: result.model } };
