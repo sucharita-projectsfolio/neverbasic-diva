@@ -104,7 +104,19 @@ Buyer opens a request from their order page or `/refund` with a preference (matc
 
 ## Deploy
 
-The project ships `sites.manifest.json` for Freebuff Sites (Workers + assets + D1 + R2).
+### Netlify (storefront + API)
+
+`netlify.toml` builds the SPA into `dist/client` and serves it from Netlify, with the API running on Netlify at `/api/*`:
+
+- `netlify/server/index.mjs` — Netlify Server entry that passes every request to the store API
+- `netlify/server/bindings.mjs` — D1/R2 shims backed by Netlify Database (Postgres) and Netlify Blobs
+- `netlify/database/migrations/` — schema, applied automatically at deploy time
+
+Import the repository in Netlify (build command `npm run build`, publish directory `dist/client`), or deploy the build output manually. The build pins Node 22 because Vite 8 needs Node 20.19 or newer.
+
+### Cloudflare / Freebuff Sites
+
+The project also ships `sites.manifest.json` for Freebuff Sites (Workers + assets + D1 + R2).
 
 Bindings required in the Worker environment:
 

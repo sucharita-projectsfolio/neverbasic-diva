@@ -2,7 +2,66 @@
   command = "npm run build"
   publish = "dist/client"
 
+# Vite 8 needs Node 20.19+, so pin the runtime Netlify builds with instead of
+# relying on its default.
+[build.environment]
+  NODE_VERSION = "22"
+
 [dev]
   framework = "#custom"
   command = "npx vite --port 5173"
   targetPort = 5173
+
+# The Netlify Server entry (netlify/server/index.mjs) serves the app shell for
+# client-side routes, but rewrites are applied before it. These rules keep deep
+# links such as /admin and /track working even when the server entry is not
+# available. They never match /api/*, which is what the server owns.
+[[redirects]]
+  from = "/ebooks/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/checkout/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/order/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/resell/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/track"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/support"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/request"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/refund"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/policies"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin"
+  to = "/index.html"
+  status = 200
