@@ -13,12 +13,14 @@ import {
   useSite,
 } from "../lib/api.jsx";
 import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
+import Ebook3D from "../components/Ebook3D.jsx";
 import {
   Button,
   Chip,
   CopyButton,
   Cover,
   Empty,
+  Faq,
   Field,
   Input,
   Modal,
@@ -31,7 +33,7 @@ import {
 import EbookCard, { WishButton } from "./EbookCard.jsx";
 import { readKit } from "../lib/sitekit.js";
 import { Rich } from "./blocks.jsx";
-import { ProductReviews, RecentlyViewed, ReviewForm, SampleModal, ShareRow, useTrackRecent } from "./Extras.jsx";
+import { ProductReviews, RatingInline, RecentlyViewed, ReviewForm, SampleModal, ShareRow, useTrackRecent } from "./Extras.jsx";
 
 export function Shop() {
   const { site } = useSite();
@@ -116,9 +118,8 @@ export function EbookPage({ slug }) {
         </div>
         <div className="detail-grid">
           <Reveal className="detail-art">
-            <div className="detail-cover">
-              <Cover ebook={ebook} lazy={false} />
-              {ebook.badge ? <span className="card-badge">{ebook.badge}</span> : null}
+            <div className="detail-3d">
+              <Ebook3D ebook={ebook} badge={ebook.badge} href={null} />
             </div>
             <div className="detail-ingredients">
               <span>PDF · {ebook.pages || "short"} pages</span>
@@ -131,6 +132,7 @@ export function EbookPage({ slug }) {
               <span className="eyebrow">{ebook.category} · neverbasic diva</span>
               <h1>{ebook.title}</h1>
               <p className="detail-sub">{ebook.subtitle}</p>
+              <RatingInline ebook={ebook} />
               <ShareRow ebook={ebook} />
             </Reveal>
             <Reveal delay={80} className="detail-price-row">
@@ -155,6 +157,23 @@ export function EbookPage({ slug }) {
                     </li>
                   ))}
                 </ul>
+              </Reveal>
+            ) : null}
+            {ebook.sample ? (
+              <Reveal delay={180} className="detail-sample">
+                <h3>A page from inside</h3>
+                <blockquote>{ebook.sample.split(/\s+/).slice(0, 95).join(" ")}…</blockquote>
+                {site.features?.samples ? (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSampleOpen(true)}>
+                    Read the full sample
+                  </button>
+                ) : null}
+              </Reveal>
+            ) : null}
+            {ebook.ai_meta?.audience ? (
+              <Reveal delay={190} className="detail-audience">
+                <h3>Who it's for</h3>
+                <p>{ebook.ai_meta.audience}</p>
               </Reveal>
             ) : null}
             <Reveal delay={200} className="buy-box">
@@ -213,6 +232,18 @@ export function EbookPage({ slug }) {
               Buy now →
             </Link>
           </div>
+        ) : null}
+
+        {ebook.ai_meta?.faq?.length ? (
+          <section className="section detail-faq">
+            <div className="section-head">
+              <div>
+                <span className="eyebrow">before you buy</span>
+                <h2>Straight answers</h2>
+              </div>
+            </div>
+            <Faq items={ebook.ai_meta.faq} />
+          </section>
         ) : null}
 
         <ProductReviews ebook={ebook} />

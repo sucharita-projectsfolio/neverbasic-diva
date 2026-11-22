@@ -282,7 +282,7 @@
 
 /* social proof */
 .social-proof {
-  position: fixed; left: 20px; bottom: 20px; z-index: 50;
+  position: fixed; left: 20px; bottom: 92px; z-index: 50;
   display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-radius: 999px;
   background: color-mix(in srgb, var(--bg) 95%, transparent);
   border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
@@ -291,6 +291,12 @@
 .social-proof strong { display: block; font-size: 11px; }
 .social-proof small { font-size: 9px; opacity: 0.55; }
 @keyframes proof-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* Product pages keep a sticky buy bar at the bottom: lift the floating widgets
+   above it so nothing covers the price or the button. */
+body:has(.sticky-buy) .assistant { bottom: 96px; }
+body:has(.sticky-buy) .wa-float { bottom: 152px; }
+body:has(.sticky-buy) .social-proof { bottom: 96px; }
 
 /* exit offer */
 .exit-code {
@@ -307,7 +313,7 @@
   .sticky-buy { bottom: 12px; border-radius: var(--r-md); }
   .assistant { right: 14px; bottom: 14px; }
   .wa-float { right: 14px; bottom: 78px; }
-  .social-proof { left: 12px; bottom: 12px; max-width: calc(100% - 24px); }
+  .social-proof { left: 12px; bottom: 88px; max-width: calc(100% - 24px); }
   .journal-foot { flex-direction: column; align-items: flex-start; }
   .newsletter-form { min-width: 100%; }
   .countdown-clock { width: 100%; justify-content: space-between; }

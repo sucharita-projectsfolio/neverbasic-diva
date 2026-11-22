@@ -88,6 +88,24 @@ async function customerData(db, customer) {
     db.prepare("SELECT code, status, expires_at, sales, clicks FROM resellers WHERE LOWER(email) = ? ORDER BY created_at DESC LIMIT 10").bind(email).all(),
   ]);
 
+  // Replies live on the account page too, not only in the email thread.
+  const ticketRows = tickets.results || [];
+  let ticketMessages = [];
+  if (ticketRows.length) {
+    const marks = ticketRows.map(() => "?").join(",");
+    const messageRows = await db
+      .prepare(
+        `SELECT ticket_ref, author, body, created_at FROM ticket_messages WHERE ticket_ref IN (${marks}) ORDER BY created_at ASC`
+      )
+      .bind(...ticketRows.map((row) => row.ref))
+      .all();
+    ticketMessages = messageRows.results || [];
+  }
+  const threads = ticketRows.map((row) => ({
+    ...row,
+    messages: ticketMessages.filter((message) => message.ticket_ref === row.ref),
+  }));
+
   const rows = orders.results || [];
   // Attach the downloadable items for every paid order.
   const ebookRows = await db.prepare("SELECT id, title, cover, pages, file_name FROM ebooks").all();
@@ -134,7 +152,7 @@ async function customerData(db, customer) {
 
   return {
     orders: list,
-    tickets: tickets.results || [],
+    tickets: threads,
     requests: requests.results || [],
     refunds: refunds.results || [],
     resellers: resellers.results || [],

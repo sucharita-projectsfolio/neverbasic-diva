@@ -7,6 +7,7 @@ import {
   aiStatus,
   readAiConfig,
   analyzeEbook,
+  generateReviews,
   generateSection,
   generateStore,
   rewriteBlock,
@@ -143,9 +144,9 @@ export async function siteExtras(env, settings) {
   const [bundles, posts, reviews, recent] = await Promise.all([
     db.prepare("SELECT * FROM bundles WHERE status = 'active' ORDER BY sort ASC, created_at DESC LIMIT 12").all(),
     db.prepare("SELECT id, slug, title, excerpt, body, cover, published_at FROM posts WHERE status = 'published' ORDER BY published_at DESC LIMIT 24").all(),
-    db.prepare("SELECT id, ebook_id, name, rating, body, created_at FROM reviews WHERE status = 'active' ORDER BY created_at DESC LIMIT 200").all(),
+    db.prepare("SELECT id, ebook_id, name, rating, body, source, created_at FROM reviews WHERE status = 'active' ORDER BY created_at DESC LIMIT 200").all(),
     db
-      .prepare("SELECT name, item_title, paid_at FROM orders WHERE status = 'paid' ORDER BY paid_at DESC LIMIT 12")
+      .prepare("SELECT name, item_title, paid_at, country FROM orders WHERE status = 'paid' AND paid_at != '' ORDER BY paid_at DESC LIMIT 24")
       .all(),
   ]);
 
@@ -174,11 +175,15 @@ export async function siteExtras(env, settings) {
     })
     .filter(Boolean);
 
+  // Real purchases only. Every entry carries its real timestamp so the storefront
+  // can say "12 minutes ago" without inventing a story.
   const firstNames = (recent.results || []).map((row) => ({
     name: String(row.name || "A reader").split(" ")[0].slice(0, 24),
     title: String(row.item_title || "").slice(0, 60),
+    city: String(row.country || "").slice(0, 40),
     at: row.paid_at,
   }));
+  const paidCount = (recent.results || []).length;
 
   const gateway = gatewayState(settings);
 
@@ -191,6 +196,11 @@ export async function siteExtras(env, settings) {
     posts: features.journal ? posts.results || [] : [],
     reviews: features.reviews ? reviews.results || [] : [],
     socialProof: features.socialProof ? firstNames : [],
+    trust: {
+      readers: paidCount,
+      reviews: (reviews.results || []).length,
+      ebooks: ebookRows.results ? ebookRows.results.length : 0,
+    },
     newsletter: {
       heading: settings.newsletter_heading || "",
       note: settings.newsletter_note || "",
@@ -558,6 +568,66 @@ export async function adminRoute(request, env, url, admin) {
   }
 
   /* ---------------------------------- reviews ------------------------------- */
+  if (path === "/reviews" && method === "POST") {
+    const body = await readJson(request);
+    const id = U.clean(body.id, 40);
+    const ebookId = U.clean(body.ebook_id, 40);
+    if (!ebookId) return U.bad("Pick the ebook this review belongs to.");
+    const ebook = await db.prepare("SELECT id FROM ebooks WHERE id = ?").bind(ebookId).first();
+    if (!ebook) return U.bad("That ebook does not exist any more.", 404);
+    const name = U.oneLine(body.name, 60) || "Reader";
+    const rating = Math.min(5, Math.max(1, U.toInt(body.rating, 5)));
+    const text = U.clean(body.body, 1200);
+    if (text.length < 10) return U.bad("A review needs at least one honest sentence.");
+    const status = body.status === "pending" ? "pending" : body.status === "hidden" ? "hidden" : "active";
+    const source = body.source === "editorial" ? "editorial" : "customer";
+    const orderRef = U.clean(body.order_ref, 40).toUpperCase();
+    if (id) {
+      await db
+        .prepare("UPDATE reviews SET ebook_id=?, name=?, rating=?, body=?, status=?, source=?, order_ref=? WHERE id=?")
+        .bind(ebookId, name, rating, text, status, source, orderRef, id)
+        .run();
+    } else {
+      await db
+        .prepare("INSERT INTO reviews (id, ebook_id, order_ref, name, email, rating, body, status, source, created_at) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)")
+        .bind(U.hex(8), ebookId, orderRef, name, rating, text, status, source, new Date().toISOString())
+        .run();
+    }
+    await audit(db, admin, "review_saved", `${name} · ${rating}★`, request);
+    return U.json({ ok: true });
+  }
+
+  // AI drafts from the ebook's own copy. Saved as editorial drafts, never as
+  // verified purchases, so the rating block stays honest.
+  if (path === "/reviews/generate" && method === "POST") {
+    if (!rateLimit(`reviewgen:${admin.id}`, 30, 60 * 60 * 1000)) return U.bad("AI review limit reached for this hour.", 429);
+    const body = await readJson(request);
+    const ebookId = U.clean(body.ebookId, 40);
+    const ebook = await db.prepare("SELECT * FROM ebooks WHERE id = ?").bind(ebookId).first();
+    if (!ebook) return U.bad("Pick an ebook first.", 404);
+    try {
+      const result = await generateReviews({
+        settings,
+        env,
+        ebook: { ...ebook, highlights: json(ebook.highlights, []) },
+        count: U.toInt(body.count, 3),
+      });
+      if (body.create) {
+        const status = body.status === "active" ? "active" : "pending";
+        for (const review of result.reviews) {
+          await db
+            .prepare("INSERT INTO reviews (id, ebook_id, order_ref, name, email, rating, body, status, source, created_at) VALUES (?, ?, '', ?, '', ?, ?, ?, 'editorial', ?)")
+            .bind(U.hex(8), ebook.id, review.name, review.rating, review.body, status, new Date().toISOString())
+            .run();
+        }
+      }
+      await audit(db, admin, "review_ai", `${ebook.title} · ${result.reviews.length} drafts`, request);
+      return U.json({ ok: true, reviews: result.reviews, meta: result.meta });
+    } catch (error) {
+      return U.json({ ok: false, error: error.message, attempts: error.attempts || [] }, 502);
+    }
+  }
+
   m = path.match(/^\/reviews\/([^/]+)$/);
   if (m && method === "POST") {
     const id = decodeURIComponent(m[1]);

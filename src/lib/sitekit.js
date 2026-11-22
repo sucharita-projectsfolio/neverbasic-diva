@@ -238,6 +238,7 @@ export const BLOCK_TYPES = [
       secondaryLink: "/resell",
       image: "",
       layout: "split",
+      artStyle: "3d",
       art: "stack",
       height: "normal",
       stickerTop: "from",
@@ -260,7 +261,12 @@ export const BLOCK_TYPES = [
         ["banner", "Full-width image banner"],
         ["minimal", "Minimal — text on plain background"],
       ]),
-      select("art", "Cover arrangement", [
+      select("artStyle", "Hero art", [
+        ["3d", "3D book — dynamic, tilts with the pointer"],
+        ["classic", "Classic covers — the original 3-cover stack"],
+        ["none", "No artwork"],
+      ]),
+      select("art", "Classic cover arrangement", [
         ["stack", "Stacked covers"],
         ["fan", "Fanned covers"],
         ["single", "One cover"],

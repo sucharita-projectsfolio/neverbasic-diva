@@ -349,7 +349,7 @@ export default function AccountPage() {
         <section className="panel">
           <h3>Support threads</h3>
           {data?.tickets?.length ? (
-            <ul className="account-list">
+            <ul className="account-list account-tickets">
               {data.tickets.map((ticket) => (
                 <li key={ticket.ref}>
                   <div>
@@ -357,6 +357,24 @@ export default function AccountPage() {
                     <small>
                       {ticket.ref} · {prettyDateTime(ticket.updated_at || ticket.created_at)}
                     </small>
+                    {ticket.messages?.length ? (
+                      <details className="account-thread">
+                        <summary>{ticket.messages.length} message{ticket.messages.length === 1 ? "" : "s"} · read the thread</summary>
+                        {ticket.messages.map((message, index) => (
+                          <div key={`${ticket.ref}-${index}`} className={`account-message ${message.author === "admin" ? "from-team" : "from-you"}`}>
+                            <strong>{message.author === "admin" ? "Neverbasic Diva" : "You"}</strong>
+                            <p>{message.body}</p>
+                            <small>{prettyDateTime(message.created_at)}</small>
+                          </div>
+                        ))}
+                      </details>
+                    ) : null}
+                    <Link
+                      className="account-thread-link"
+                      to={`/support?ticket=${encodeURIComponent(ticket.ref)}&email=${encodeURIComponent(data?.customer?.email || "")}`}
+                    >
+                      Reply in the thread →
+                    </Link>
                   </div>
                   <StatusPill status={ticket.status} />
                 </li>

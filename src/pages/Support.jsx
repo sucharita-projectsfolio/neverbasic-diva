@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, Link, money, prettyDateTime, useSite } from "../lib/api.jsx";
 import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
 import {
@@ -32,6 +32,19 @@ export function SupportPage() {
   const [ticket, setTicket] = useState(null);
   const [reply, setReply] = useState("");
   const [lookupBusy, setLookupBusy] = useState(false);
+
+  // Emails link straight into a thread: /support?ticket=TKT-…&email=…
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ticket");
+    const mail = params.get("email");
+    if (!ref || !mail) return;
+    setLookup({ ref, email: mail });
+    setMode("lookup");
+    api(`/api/tickets/${encodeURIComponent(ref)}?email=${encodeURIComponent(mail)}`)
+      .then((result) => setTicket({ ...result, email: mail }))
+      .catch((err) => toast(err.message, "bad"));
+  }, []);
 
   async function submit(event) {
     event.preventDefault();

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, api, money, useSite } from "../lib/api.jsx";
 import { Cover, Reveal, Stars, Faq, Chip } from "../ui.jsx";
 import { fillTokens, readKit } from "../lib/sitekit.js";
 import EbookCard from "./EbookCard.jsx";
+import Ebook3D from "../components/Ebook3D.jsx";
 
 /* --------------------------------- text ---------------------------------- */
 
@@ -48,7 +49,36 @@ function Head({ eyebrow, title, sub, center = false, tokens }) {
 /* --------------------------------- hero ---------------------------------- */
 
 function HeroArt({ block, list, lowest, tokens }) {
-  if (block.art === "none" || !list.length) return null;
+  if (!list.length) return null;
+  // Saved blocks from before the 3D hero have no artStyle. They get the 3D book
+  // now, and the admin can switch back to the classic stack whenever they want.
+  const style = block.artStyle || (block.art === "none" ? "none" : "3d");
+  if (style === "none") return null;
+
+  const notes =
+    block.artNote1 || block.artNote2 ? (
+      <div className="art-note">
+        <span>{block.artNote1}</span>
+        <span>{block.artNote2}</span>
+      </div>
+    ) : null;
+
+  if (style === "3d") {
+    const book = list[0];
+    return (
+      <div className="art-stack art-3d">
+        <Ebook3D
+          ebook={book}
+          price={money(lowest)}
+          badge={block.stickerTop || book.badge || ""}
+          note={block.stickerNote || "instant PDF"}
+        />
+        {notes}
+      </div>
+    );
+  }
+
+  // The original hero: two or three flat covers stacked and rotated.
   const covers = block.art === "single" ? list.slice(0, 1) : list.slice(0, 3);
   return (
     <div className={`art-stack art-${block.art || "stack"}`}>
@@ -64,12 +94,7 @@ function HeroArt({ block, list, lowest, tokens }) {
           <span className="art-sticker-bottom">{block.stickerNote}</span>
         </div>
       ) : null}
-      {block.artNote1 || block.artNote2 ? (
-        <div className="art-note">
-          <span>{block.artNote1}</span>
-          <span>{block.artNote2}</span>
-        </div>
-      ) : null}
+      {notes}
     </div>
   );
 }
@@ -187,6 +212,77 @@ function Hero({ block, site, tokens }) {
 
 /* ------------------------------- sections -------------------------------- */
 
+// Counts a number up when the strip scrolls into view. Prefixes, suffixes and
+// decimals are preserved exactly ("12,400+" → 0 … 12,400+, "4.9/5" → 0.0 … 4.9/5).
+function AnimatedFigure({ value }) {
+  const ref = useRef(null);
+  const text = String(value ?? "");
+  const match = text.match(/^([^\d]*)([\d,]+(?:\.\d+)?)(.*)$/s);
+  const target = match ? Number(match[2].replace(/,/g, "")) : 0;
+  const decimals = match && match[2].includes(".") ? match[2].split(".")[1].length : 0;
+  const grouped = match ? match[2].includes(",") : false;
+  const [shown, setShown] = useState(match ? 0 : null);
+
+  useEffect(() => {
+    if (!match || !ref.current) return undefined;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShown(target);
+      return undefined;
+    }
+    let frame = 0;
+    let fallback = 0;
+    let done = false;
+    const node = ref.current;
+    const start = () => {
+      if (done) return;
+      done = true;
+      if (fallback) window.clearTimeout(fallback);
+      const began = performance.now();
+      const step = (now) => {
+        const t = Math.min(1, (now - began) / 1200);
+        const eased = 1 - Math.pow(1 - t, 3);
+        setShown(target * eased);
+        if (t < 1) frame = window.requestAnimationFrame(step);
+      };
+      frame = window.requestAnimationFrame(step);
+    };
+    if (!("IntersectionObserver" in window)) {
+      start();
+      return () => window.cancelAnimationFrame(frame);
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          start();
+        }
+      },
+      { threshold: 0, rootMargin: "0px 0px -8% 0px" }
+    );
+    // The <strong> is inline, so observe its whole stat cell; and never leave a
+    // correct number sitting at zero if the observer does not fire at all.
+    observer.observe(node.closest(".stat") || node);
+    fallback = window.setTimeout(start, 2600);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(fallback);
+      window.cancelAnimationFrame(frame);
+    };
+  }, [target, text]);
+
+  if (!match) return <strong>{text}</strong>;
+  const number = grouped
+    ? shown.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    : shown.toFixed(decimals);
+  return (
+    <strong ref={ref}>
+      {match[1]}
+      {number}
+      {match[3]}
+    </strong>
+  );
+}
+
 function Stats({ block, tokens }) {
   const items = Array.isArray(block.items) ? block.items.filter((item) => item && (item.value || item.label)) : [];
   if (!items.length) return null;
@@ -201,7 +297,7 @@ function Stats({ block, tokens }) {
         <div className="stats-grid">
           {items.map((stat, index) => (
             <Reveal key={index} delay={index * 60} className="stat">
-              <strong>{fillTokens(stat.value, tokens)}</strong>
+              <AnimatedFigure value={fillTokens(stat.value, tokens)} />
               <span>{fillTokens(stat.label, tokens)}</span>
             </Reveal>
           ))}

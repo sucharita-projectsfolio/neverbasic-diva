@@ -119,3 +119,44 @@
   gap: 12px;
   margin: 12px 0 4px;
 }
+
+/* --------------------------- product review admin ------------------------- */
+
+.review-toggle-row {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(36, 30, 27, 0.035);
+  margin-bottom: 14px;
+}
+
+.ai-review-box {
+  border: 1px dashed rgba(36, 30, 27, 0.18);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 20px;
+  background: rgba(176, 102, 90, 0.04);
+}
+
+.review-drafts {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.review-draft {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(36, 30, 27, 0.08);
+}
+
+.review-draft p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4a403b;
+}

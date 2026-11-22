@@ -790,6 +790,19 @@ function Assistant() {
   );
 }
 
+export function timeAgo(value) {
+  const then = new Date(value || 0).getTime();
+  if (!then || Number.isNaN(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} day${days > 1 ? "s" : ""} ago`;
+  return prettyDate(value);
+}
+
 function SocialProof({ items }) {
   const [current, setCurrent] = useState(null);
   useEffect(() => {
@@ -815,8 +828,13 @@ function SocialProof({ items }) {
     <div className="social-proof" role="status">
       <span className="live-dot" />
       <div>
-        <strong>{current.name} just bought {current.title}</strong>
-        <small>verified order</small>
+        <strong>
+          {current.name} bought {current.title}
+        </strong>
+        <small>
+          verified order · {timeAgo(current.at)}
+          {current.city ? ` · ${current.city}` : ""}
+        </small>
       </div>
     </div>
   );
@@ -903,30 +921,100 @@ export function StoreWidgets() {
 
 /* ------------------------------ product helpers ---------------------------- */
 
-export function ProductReviews({ ebook }) {
+export function RatingInline({ ebook }) {
   const { site } = useSite();
+  if (!site.features?.reviews) return null;
   const reviews = (site.reviews || []).filter((review) => review.ebook_id === ebook.id);
-  if (!site.features?.reviews || !reviews.length) return null;
+  if (!reviews.length) {
+    return (
+      <a className="rating-inline muted" href="#reviews">
+        Be the first to review
+      </a>
+    );
+  }
   const average = reviews.reduce((sum, review) => sum + Number(review.rating || 5), 0) / reviews.length;
   return (
-    <section className="product-reviews">
+    <a className="rating-inline" href="#reviews" aria-label={`${average.toFixed(1)} out of 5 from ${reviews.length} reviews`}>
+      <Stars value={Math.round(average)} />
+      <span>
+        <strong>{average.toFixed(1)}</strong> · {reviews.length} review{reviews.length === 1 ? "" : "s"}
+      </span>
+    </a>
+  );
+}
+
+export function ProductReviews({ ebook }) {
+  const { site } = useSite();
+  if (!site.features?.reviews) return null;
+  const reviews = (site.reviews || []).filter((review) => review.ebook_id === ebook.id);
+  const average = reviews.length
+    ? reviews.reduce((sum, review) => sum + Number(review.rating || 5), 0) / reviews.length
+    : 0;
+  const buckets = [5, 4, 3, 2, 1].map((star) => ({
+    star,
+    count: reviews.filter((review) => Number(review.rating) === star).length,
+  }));
+
+  return (
+    <section className="product-reviews" id="reviews">
       <div className="product-reviews-head">
-        <h3>Verified buyer reviews</h3>
-        <span>
-          <Stars value={Math.round(average)} /> {average.toFixed(1)} · {reviews.length}
-        </span>
-      </div>
-      <div className="product-review-grid">
-        {reviews.slice(0, 6).map((review) => (
-          <div key={review.id} className="product-review">
-            <div>
-              <strong>{review.name}</strong>
-              <Stars value={review.rating} />
-            </div>
-            <p>{review.body}</p>
-            <small>✓ paid order · {prettyDate(review.created_at)}</small>
+        <div>
+          <span className="eyebrow">reader notes</span>
+          <h3>What readers say</h3>
+        </div>
+        <div className="rating-hero">
+          <strong>{reviews.length ? average.toFixed(1) : "New"}</strong>
+          <div>
+            <Stars value={Math.round(average)} />
+            <small>{reviews.length ? `${reviews.length} review${reviews.length === 1 ? "" : "s"}` : "no reviews yet"}</small>
           </div>
-        ))}
+        </div>
+      </div>
+
+      {reviews.length ? (
+        <>
+          <div className="rating-bars">
+            {buckets.map((bucket) => (
+              <div key={bucket.star} className="rating-bar">
+                <span>{bucket.star}★</span>
+                <div className="rating-bar-track">
+                  <span style={{ width: `${reviews.length ? (bucket.count / reviews.length) * 100 : 0}%` }} />
+                </div>
+                <small>{bucket.count}</small>
+              </div>
+            ))}
+          </div>
+          <div className="product-review-grid">
+            {reviews.slice(0, 8).map((review) => {
+              const editorial = review.source === "editorial";
+              return (
+                <div key={review.id} className={`product-review${editorial ? " is-editorial" : ""}`}>
+                  <div>
+                    <strong>{review.name}</strong>
+                    <Stars value={review.rating} />
+                  </div>
+                  <p>{review.body}</p>
+                  <small>
+                    {editorial ? "editor's take · written from the book" : "✓ verified paid order"} ·{" "}
+                    {prettyDate(review.created_at)}
+                  </small>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <p className="product-reviews-empty">
+          No reviews on this one yet. If you have already bought it, your review from the order page shows up
+          here after a quick check.
+        </p>
+      )}
+
+      <div className="product-reviews-foot">
+        <span>Bought this ebook? Your honest review takes 30 seconds.</span>
+        <Link to="/track" className="btn btn-ghost btn-sm">
+          Review from my order →
+        </Link>
       </div>
     </section>
   );

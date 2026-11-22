@@ -5,6 +5,17 @@
 import { clean } from "./util.js";
 
 export const PROVIDER_CATALOG = {
+  gemini: {
+    label: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    // Gemini writes the product-page copy first and everything else is the
+    // fallback. Verified against a live key: 3.6-flash and 3.5-flash answer
+    // hard JSON reliably; 3.8-flash occasionally returns 503 on high demand, so
+    // it sits behind the two steadier models.
+    models: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"],
+    jsonMode: true,
+  },
   groq: {
     label: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
@@ -148,6 +159,7 @@ export function aiStatus(settings = {}, env = {}) {
     enabled: settings.ai_enabled !== "0",
     temperature: config.temperature,
     envDetected: {
+      gemini: Boolean(env.GEMINI_API_KEY || env.GOOGLE_API_KEY),
       groq: Boolean(env.GROQ_API_KEY || env.GROQ_KEY),
       openrouter: Boolean(env.OPENROUTER_API_KEY || env.OPENROUTER_KEY),
     },
@@ -216,7 +228,7 @@ export async function aiChat({
   const usable = config.providers.filter((provider) => provider.apiKey && provider.baseUrl);
   if (!usable.length) {
     throw new AiError(
-      "No AI provider key yet. Paste your Groq and/or OpenRouter key in Admin → AI studio, or set GROQ_API_KEY / OPENROUTER_API_KEY in your hosting environment."
+      "No AI provider key yet. Paste your Gemini, Groq and/or OpenRouter key in Admin → AI studio, or set GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY in your hosting environment."
     );
   }
 
@@ -316,22 +328,30 @@ export async function aiChat({
         continue;
       }
       let text = extractText(data);
-      // A reasoning model that ran out of budget returns no content at all. Give
-      // it a bigger allowance once instead of treating it as a dead model.
-      if (!text && data?.choices?.[0]?.finish_reason === "length" && maxTokens < 6000) {
+      // A JSON answer that got cut off is as useless as an empty one: give the
+      // model one bigger allowance, then move on to the next provider instead of
+      // failing the whole product page.
+      const brokenJson = () => json && !parseJsonLoose(text);
+      if ((!text || brokenJson()) && data?.choices?.[0]?.finish_reason === "length" && maxTokens < 8000) {
         try {
           const retry = await fetchWithTimeout(
             `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`,
-            { method: "POST", headers, body: JSON.stringify({ ...body, max_tokens: Math.min(6000, Math.max(1200, maxTokens * 8)) }) },
+            { method: "POST", headers, body: JSON.stringify({ ...body, max_tokens: Math.min(8000, Math.max(2400, maxTokens * 2)) }) },
             timeout
           );
           if (retry.ok) text = extractText(await retry.json());
         } catch {
-          /* fall through to the empty-response attempt below */
+          /* fall through to the checks below */
         }
       }
       if (!text) {
         attempts.push({ provider: provider.label, model, status: 200, error: "empty response", ms: Date.now() - started });
+        continue;
+      }
+      // When JSON was requested, unreadable output means this model failed — try
+      // the next one rather than throwing away the request.
+      if (json && !parseJsonLoose(text)) {
+        attempts.push({ provider: provider.label, model, status: 200, error: "unreadable json", ms: Date.now() - started });
         continue;
       }
       attempts.push({ provider: provider.label, model, status: 200, ms: Date.now() - started });
@@ -615,7 +635,7 @@ export async function analyzeEbook({
     settings,
     env,
     json: true,
-    maxTokens: 3600,
+    maxTokens: 6000,
     messages: [
       { role: "system", content: systemPrompt(tone || settings.ai_tone) },
       { role: "user", content: user },
@@ -728,6 +748,54 @@ export async function generateSection({ settings = {}, env = {}, section, ebook 
   return { patch, meta: { provider: result.provider, model: result.model, attempts: result.attempts } };
 }
 
+/**
+ * Drafts short reader reviews from the ebook's own copy. They are saved as
+ * editorial drafts, not verified purchases: the owner reads them, edits them to
+ * match real feedback, and only then publishes. Nothing here invents results or
+ * income claims.
+ */
+export async function generateReviews({ settings = {}, env = {}, ebook = {}, count = 3 } = {}) {
+  const total = Math.min(5, Math.max(1, Number(count) || 3));
+  const context = [
+    `Ebook: ${clean(ebook.title, 160) || "untitled"}`,
+    ebook.subtitle ? `Subtitle: ${clean(ebook.subtitle, 220)}` : "",
+    ebook.category ? `Category: ${clean(ebook.category, 40)}` : "",
+    ebook.description ? `Description:\n${clean(ebook.description, 3000)}` : "",
+    Array.isArray(ebook.highlights) && ebook.highlights.length
+      ? `Inside:\n- ${ebook.highlights.slice(0, 8).join("\n- ")}`
+      : "",
+    ebook.sample ? `Opening:\n${clean(ebook.sample, 1600)}` : "",
+    `Write ${total} short, believable reader reviews for this ebook.`,
+    "Each review: one specific thing the reader noticed, one honest reservation or nuance, 25-55 words, plain language, no emoji, no hype, no income or body claims, no fake numbers.",
+    "Ratings must be 4 or 5. Names: common first names only, no surnames, nothing that reads like a placeholder.",
+    `Return exactly: {"reviews":[{"name":"…","rating":5,"body":"…"}]}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const result = await aiChat({
+    settings,
+    env,
+    json: true,
+    maxTokens: 1600,
+    messages: [
+      { role: "system", content: systemPrompt(settings.ai_tone) },
+      { role: "user", content: context },
+    ],
+  });
+  const parsed = parseJsonLoose(result.text);
+  const list = (Array.isArray(parsed?.reviews) ? parsed.reviews : [])
+    .map((row) => ({
+      name: asString(row?.name, 40).split(/\s+/)[0] || "Reader",
+      rating: clampInt(row?.rating, 4, 5, 5),
+      body: asString(row?.body, 600),
+    }))
+    .filter((row) => row.body.length >= 20)
+    .slice(0, total);
+  if (!list.length) throw new AiError("The model returned no usable reviews. Try again.", result.attempts);
+  return { reviews: list, meta: { provider: result.provider, model: result.model, attempts: result.attempts } };
+}
+
 const BLOCK_TYPES = [
   "hero", "stats", "library", "value", "quote", "testimonials", "resell", "promise", "faq", "cta",
   "banner", "text", "gallery", "ticker", "countdown", "newsletter", "bundles", "journal", "split",
@@ -752,7 +820,7 @@ export async function generateStore({ settings = {}, env = {}, prompt = "", cata
     settings,
     env,
     json: true,
-    maxTokens: 4000,
+    maxTokens: 6000,
     messages: [
       { role: "system", content: systemPrompt(tone || settings.ai_tone) },
       { role: "user", content: user },
@@ -870,6 +938,7 @@ export async function assistantReply({ settings = {}, env = {}, messages = [], c
   const system = [
     "You are the shop assistant for Neverbasic Diva, an ebook store.",
     "Answer in at most 90 words. Warm, direct, no hype, never invent discounts, refunds or delivery promises beyond the facts below.",
+    "Return only the reply the customer will read — no word counts, no notes to yourself, no markdown headings.",
     "Facts: payment unlocks the PDF instantly on the order page; prices are one-time; orders are looked up at /track with reference + email; support is at /support; resell licences exist only if enabled.",
     settings.resell_enabled === "1" ? `Resell licence: one-time ${settings.resell_price} for one year, page /resell.` : "Resell licences are currently closed.",
     books ? `Catalogue:\n${books}` : "",
@@ -882,7 +951,9 @@ export async function assistantReply({ settings = {}, env = {}, messages = [], c
     settings,
     env,
     json: false,
-    maxTokens: 450,
+    // Gemini counts its thinking against the same budget; 450 was sometimes
+    // spent before the first sentence of the answer.
+    maxTokens: 1400,
     timeout: 12000,
     budget: 15000,
     messages: [{ role: "system", content: system }, ...history],

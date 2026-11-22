@@ -63,8 +63,9 @@ export default function AiStudio({ data, reload }) {
   const [tone, setTone] = useState(settings.ai_tone || "");
   const [temperature, setTemperature] = useState(raw.temperature ?? 0.85);
   const [enabled, setEnabled] = useState(settings.ai_enabled !== "0");
-  const [keys, setKeys] = useState({ groq: "", openrouter: "", custom: "" });
+  const [keys, setKeys] = useState({ gemini: "", groq: "", openrouter: "", custom: "" });
   const [models, setModels] = useState({
+    gemini: (provider("gemini").models || []).join(", "),
     groq: (provider("groq").models || []).join(", "),
     openrouter: (provider("openrouter").models || []).join(", "),
     custom: (provider("custom").models || []).join(", "),
@@ -93,6 +94,12 @@ export default function AiStudio({ data, reload }) {
     setSaving(true);
     try {
       const providers = [
+        {
+          id: "gemini",
+          enabled: true,
+          apiKey: keys.gemini || initial("gemini").apiKey || "",
+          models: splitModels(models.gemini),
+        },
         { id: "groq", enabled: true, apiKey: keys.groq || initial("groq").apiKey || "", models: splitModels(models.groq) },
         {
           id: "openrouter",
@@ -120,7 +127,7 @@ export default function AiStudio({ data, reload }) {
         },
       });
       toast("AI settings saved");
-      setKeys({ groq: "", openrouter: "", custom: "" });
+      setKeys({ gemini: "", groq: "", openrouter: "", custom: "" });
       await reload();
     } catch (error) {
       toast(error.message, "bad");
@@ -293,7 +300,7 @@ export default function AiStudio({ data, reload }) {
     <div className="stack-lg">
       <Card
         title="Provider chain"
-        hint="Groq's 120B gpt-oss runs first (fast + strongest free model there), then OpenRouter's Nemotron 3 Ultra 550B and Ernie 5.5, then any custom endpoint. A dead model is skipped automatically, so one exhausted quota never breaks the store."
+        hint="Gemini writes every product page first, then Groq's 120B gpt-oss, then OpenRouter's Nemotron 3 Ultra 550B. A dead model or exhausted quota is skipped automatically, so one bad key never breaks the store."
         actions={
           <>
             <Button size="sm" variant="secondary" onClick={test} loading={testing}>
@@ -309,10 +316,26 @@ export default function AiStudio({ data, reload }) {
           <span className={ai.providers.some((entry) => entry.hasKey) ? "dot good" : "dot warn"} />
           {ai.providers.some((entry) => entry.hasKey)
             ? `${ai.providers.filter((entry) => entry.hasKey).length} provider(s) ready`
-            : "No key yet — paste one below, or set GROQ_API_KEY / OPENROUTER_API_KEY in Netlify"}
+            : "No key yet — paste one below, or set GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY in Netlify"}
         </div>
         <Toggle checked={enabled} onChange={setEnabled} label="AI features enabled" hint="Turn off to stop all AI calls instantly." />
         <div className="two-col">
+          <Field
+            label="Google Gemini API key"
+            hint={
+              provider("gemini").hasKey
+                ? `Saved (${provider("gemini").keySource}). Leave blank to keep it.`
+                : "Free at aistudio.google.com → API keys. Used first for product pages."
+            }
+          >
+            <Input
+              type="password"
+              value={keys.gemini}
+              onChange={(event) => setKeys({ ...keys, gemini: event.target.value })}
+              placeholder="AIza…"
+              autoComplete="off"
+            />
+          </Field>
           <Field label="Groq API key" hint={provider("groq").hasKey ? `Saved (${provider("groq").keySource}). Leave blank to keep it.` : "Free at console.groq.com → API keys"}>
             <Input type="password" value={keys.groq} onChange={(event) => setKeys({ ...keys, groq: event.target.value })} placeholder="gsk_…" autoComplete="off" />
           </Field>
@@ -327,13 +350,16 @@ export default function AiStudio({ data, reload }) {
           </Field>
         </div>
         <div className="two-col">
-          <Field label="Groq models (in order)" hint="First available model wins. Comma separated.">
+          <Field label="Gemini models (in order)" hint="First model that answers wins. Comma separated.">
+            <Textarea rows={2} value={models.gemini} onChange={(event) => setModels({ ...models, gemini: event.target.value })} />
+          </Field>
+          <Field label="Groq models (in order)" hint="Fallback when Gemini is unavailable.">
             <Textarea rows={2} value={models.groq} onChange={(event) => setModels({ ...models, groq: event.target.value })} />
           </Field>
-          <Field label="OpenRouter models (in order)" hint="Free model ids, comma separated.">
-            <Textarea rows={2} value={models.openrouter} onChange={(event) => setModels({ ...models, openrouter: event.target.value })} />
-          </Field>
         </div>
+        <Field label="OpenRouter models (in order)" hint="Last fallback. Free model ids, comma separated.">
+          <Textarea rows={2} value={models.openrouter} onChange={(event) => setModels({ ...models, openrouter: event.target.value })} />
+        </Field>
         <div className="two-col">
           <Field label="Brand tone" hint="Used in every prompt.">
             <Textarea rows={2} value={tone} onChange={(event) => setTone(event.target.value)} />

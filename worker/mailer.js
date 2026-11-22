@@ -83,6 +83,40 @@ export function deliveryEmailHtml({ settings, order, items, downloadUrl, receipt
   </div></body></html>`;
 }
 
+const esc = (value) =>
+  String(value == null ? "" : value).replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]);
+
+// Goes to the store owner the moment a buyer writes in, so nothing sits unseen
+// in the dashboard.
+export function supportEmailHtml({ ticket, url, brand }) {
+  return `<!doctype html><html><body style="margin:0;background:#FAF6F0;padding:24px">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:26px;border:1px solid #eee6da">
+    <p style="font:600 11px Helvetica,Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#B0665A;margin:0 0 8px">new support message</p>
+    <h1 style="font:400 24px Georgia,serif;color:#241E1B;margin:0 0 4px">${esc(ticket.subject)}</h1>
+    <p style="font:13px/1.6 Helvetica,Arial,sans-serif;color:#6f635c;margin:0 0 16px">
+      ${esc(ticket.name)} · <a href="mailto:${esc(ticket.email)}" style="color:#B0665A">${esc(ticket.email)}</a>
+      ${ticket.order_ref ? ` · order ${esc(ticket.order_ref)}` : ""} · ticket ${esc(ticket.ref)}
+    </p>
+    <div style="font:14px/1.7 Helvetica,Arial,sans-serif;color:#241E1B;background:#FAF6F0;border-radius:12px;padding:16px;white-space:pre-wrap">${esc(ticket.message)}</div>
+    <p style="margin:20px 0 0"><a href="${esc(url)}" style="display:inline-block;background:#B0665A;color:#fff;padding:11px 18px;border-radius:999px;font:600 13px Helvetica,Arial,sans-serif;text-decoration:none">Reply in the studio</a></p>
+    <p style="font:12px/1.6 Helvetica,Arial,sans-serif;color:#a89d95;margin:18px 0 0">${esc(brand)} · reply from Admin → Support.</p>
+  </div></body></html>`;
+}
+
+// Goes to the customer when the owner answers a ticket.
+export function replyEmailHtml({ ticket, body, url, brand, settings }) {
+  return `<!doctype html><html><body style="margin:0;background:#FAF6F0;padding:24px">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:26px;border:1px solid #eee6da">
+    <p style="font:600 11px Helvetica,Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#B0665A;margin:0 0 8px">reply to ${esc(ticket.ref)}</p>
+    <h1 style="font:400 24px Georgia,serif;color:#241E1B;margin:0 0 10px">${esc(ticket.subject)}</h1>
+    <p style="font:14px/1.6 Helvetica,Arial,sans-serif;color:#6f635c;margin:0 0 6px">Hi ${esc(String(ticket.name || "there").split(" ")[0])},</p>
+    <div style="font:14px/1.7 Helvetica,Arial,sans-serif;color:#241E1B;background:#FAF6F0;border-radius:12px;padding:16px;white-space:pre-wrap">${esc(body)}</div>
+    <p style="margin:20px 0 0"><a href="${esc(url)}" style="display:inline-block;background:#B0665A;color:#fff;padding:11px 18px;border-radius:999px;font:600 13px Helvetica,Arial,sans-serif;text-decoration:none">Open the thread</a></p>
+    <p style="font:12px/1.6 Helvetica,Arial,sans-serif;color:#8b7f77;margin:16px 0 0">Reply from this email or from your account page. This thread is saved under your account.</p>
+    <p style="font:12px/1.6 Helvetica,Arial,sans-serif;color:#a89d95;margin:18px 0 0;border-top:1px solid #eee6da;padding-top:12px">${esc(brand)} · ${esc(settings.support_email || "")}</p>
+  </div></body></html>`;
+}
+
 export function receiptPdf({ settings, order, meta, amountLabel, brand }) {
   return U.demoPdf(
     order.item_title || "Order receipt",

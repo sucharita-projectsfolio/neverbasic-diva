@@ -514,6 +514,7 @@ function Orders({ data, reload }) {
   const [active, setActive] = useState(null);
   const [txnid, setTxnid] = useState("");
   const [note, setNote] = useState("");
+  const [customerMsg, setCustomerMsg] = useState("");
 
   const orders = data.orders.filter((order) => {
     const matchesStatus = filter === "all" || order.status === filter;
@@ -608,6 +609,7 @@ function Orders({ data, reload }) {
                     setActive(order);
                     setTxnid(order.payu_txnid || "");
                     setNote(order.notes || "");
+                    setCustomerMsg("");
                   }}
                 >
                   Manage
@@ -682,6 +684,22 @@ function Orders({ data, reload }) {
               </div>
             ) : null}
 
+            <div className="boxed">
+              <h4>Message the customer</h4>
+              <p className="admin-muted">
+                This lands in their inbox (when email is configured) and in the support thread on their account page.
+              </p>
+              <Textarea
+                rows={3}
+                value={customerMsg}
+                onChange={(event) => setCustomerMsg(event.target.value)}
+                placeholder="Any update about their order, download or refund…"
+              />
+              <Button size="sm" variant="secondary" onClick={() => act(active, "message", { message: customerMsg })}>
+                Send to customer
+              </Button>
+            </div>
+
             <Field label="Internal note">
               <Textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} />
             </Field>
@@ -705,6 +723,18 @@ function Orders({ data, reload }) {
                   Cancel order
                 </Button>
               ) : null}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="danger-text"
+                onClick={() => {
+                  if (window.confirm(`Delete order ${active.ref} permanently? Its access link and history go with it.`)) {
+                    act(active, "delete");
+                  }
+                }}
+              >
+                Delete order
+              </Button>
             </div>
             {active.reseller_code ? <p className="field-hint">Referred by reseller {active.reseller_code}</p> : null}
           </div>
@@ -1875,8 +1905,9 @@ function Reviews({ data, reload }) {
 
   return (
     <div className="stack-lg">
+      <ProductReviewAdmin data={data} reload={reload} />
       <SectionCard
-        title={`${data.testimonials.length} reviews`}
+        title={`${data.testimonials.length} home-page reviews`}
         subtitle="Shown on the home page. Hide any that stop feeling true."
         actions={
           <Button
@@ -2179,5 +2210,291 @@ function Account({ admin, reload }) {
         </a>
       </SectionCard>
     </div>
+  );
+}
+
+/* --------------------------- product page reviews ------------------------ */
+
+function ProductReviewAdmin({ data, reload }) {
+  const toast = useToast();
+  const books = useMemo(() => Object.fromEntries((data.ebooks || []).map((row) => [row.id, row.title])), [data.ebooks]);
+  const settings = data.settings || {};
+  const features = useMemo(() => {
+    try {
+      return { ...JSON.parse(settings.store_features || "{}") };
+    } catch {
+      return {};
+    }
+  }, [settings.store_features]);
+  const [reviewsOn, setReviewsOn] = useState(features.reviews !== false);
+  const [savingToggle, setSavingToggle] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ id: "", ebook_id: "", name: "", rating: 5, body: "", status: "active", source: "customer", order_ref: "" });
+  const [ai, setAi] = useState({ ebookId: data.ebooks[0]?.id || "", count: 3, busy: false, drafts: [] });
+
+  async function toggleReviews(next) {
+    setReviewsOn(next);
+    setSavingToggle(true);
+    try {
+      await api("/api/admin/settings", {
+        method: "POST",
+        body: { store_features: JSON.stringify({ ...features, reviews: next }) },
+      });
+      toast(next ? "Reviews are visible on product pages" : "Reviews section hidden");
+      await reload();
+    } catch (error) {
+      setReviewsOn(!next);
+      toast(error.message, "bad");
+    } finally {
+      setSavingToggle(false);
+    }
+  }
+
+  function open(review) {
+    setForm(
+      review
+        ? {
+            id: review.id,
+            ebook_id: review.ebook_id,
+            name: review.name || "",
+            rating: Number(review.rating) || 5,
+            body: review.body || "",
+            status: review.status === "hidden" ? "hidden" : review.status === "pending" ? "pending" : "active",
+            source: review.source === "editorial" ? "editorial" : "customer",
+            order_ref: review.order_ref || "",
+          }
+        : { id: "", ebook_id: data.ebooks[0]?.id || "", name: "", rating: 5, body: "", status: "active", source: "customer", order_ref: "" }
+    );
+    setEditing(review || {});
+  }
+
+  async function save() {
+    try {
+      await api("/api/admin/reviews", { method: "POST", body: form });
+      toast("Review saved");
+      setEditing(null);
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    }
+  }
+
+  async function act(review, action) {
+    try {
+      await api(`/api/admin/reviews/${encodeURIComponent(review.id)}`, { method: "POST", body: { action } });
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    }
+  }
+
+  async function draftWithAi(create = false) {
+    if (!ai.ebookId) {
+      toast("Pick an ebook first.", "bad");
+      return;
+    }
+    setAi((current) => ({ ...current, busy: true }));
+    try {
+      const result = await api("/api/admin/reviews/generate", {
+        method: "POST",
+        body: { ebookId: ai.ebookId, count: Number(ai.count) || 3, create, status: "active" },
+      });
+      setAi((current) => ({ ...current, drafts: result.reviews || [] }));
+      toast(create ? "Drafts published as editor's takes" : `${result.reviews.length} drafts from ${result.meta.provider}`);
+      if (create) await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setAi((current) => ({ ...current, busy: false }));
+    }
+  }
+
+  async function publishDraft(draft) {
+    try {
+      await api("/api/admin/reviews", {
+        method: "POST",
+        body: {
+          ebook_id: ai.ebookId,
+          name: draft.name,
+          rating: draft.rating,
+          body: draft.body,
+          status: "active",
+          source: "editorial",
+        },
+      });
+      setAi((current) => ({ ...current, drafts: current.drafts.filter((row) => row !== draft) }));
+      toast("Published as an editor's take");
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    }
+  }
+
+  return (
+    <SectionCard
+      title={`${data.reviews.length} product reviews`}
+      subtitle="Verified reviews come from paid orders. Editor's takes are written from the book itself and labelled that way on the page."
+      actions={
+        <Button size="sm" onClick={() => open(null)}>
+          + Add review
+        </Button>
+      }
+    >
+      <div className="review-toggle-row">
+        <Toggle
+          checked={reviewsOn}
+          onChange={(value) => (savingToggle ? null : toggleReviews(value))}
+          label="Show ratings & reviews on product pages"
+          hint="Off hides every star and review on the storefront, instantly."
+        />
+      </div>
+
+      <div className="ai-review-box">
+        <div className="three-col">
+          <Field label="Ebook">
+            <Select value={ai.ebookId} onChange={(event) => setAi({ ...ai, ebookId: event.target.value, drafts: [] })}>
+              {data.ebooks.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.title}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="How many">
+            <Input
+              type="number"
+              min="1"
+              max="5"
+              value={ai.count}
+              onChange={(event) => setAi({ ...ai, count: event.target.value })}
+            />
+          </Field>
+          <Field label="Draft with AI" hint="Written from the ebook copy. Nothing is published until you approve it.">
+            <div className="row-actions">
+              <Button size="sm" variant="secondary" onClick={() => draftWithAi(false)} loading={ai.busy}>
+                Draft
+              </Button>
+              <Button size="sm" onClick={() => draftWithAi(true)} loading={ai.busy}>
+                Draft &amp; publish
+              </Button>
+            </div>
+          </Field>
+        </div>
+        {ai.drafts.length ? (
+          <div className="review-drafts">
+            {ai.drafts.map((draft, index) => (
+              <div key={index} className="review-draft">
+                <div>
+                  <strong>
+                    {draft.name} · {"★".repeat(draft.rating)}
+                  </strong>
+                  <p>{draft.body}</p>
+                </div>
+                <Button size="sm" onClick={() => publishDraft(draft)}>
+                  Publish
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <DataTable head={["Reader", "Ebook", "Review", "Stars", "Source", "Status", ""]}>
+        {data.reviews.map((review) => (
+          <tr key={review.id}>
+            <td>
+              <strong>{review.name}</strong>
+              {review.order_ref ? <small className="cell-sub">Order {review.order_ref}</small> : null}
+            </td>
+            <td>{books[review.ebook_id] || "—"}</td>
+            <td className="clamp-cell">{review.body}</td>
+            <td>{review.rating}★</td>
+            <td>{review.source === "editorial" ? "editor's take" : "verified"}</td>
+            <td>
+              <StatusPill status={review.status} />
+            </td>
+            <td>
+              <div className="row-actions">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => open(review)}>
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => act(review, review.status === "active" ? "hide" : "activate")}
+                >
+                  {review.status === "active" ? "Hide" : "Show"}
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm danger-text" onClick={() => act(review, "delete")}>
+                  Delete
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+        {!data.reviews.length ? (
+          <tr>
+            <td colSpan={7} className="table-empty">
+              No reviews yet. Verified reviews arrive from paid orders; you can also add your own.
+            </td>
+          </tr>
+        ) : null}
+      </DataTable>
+
+      <Modal open={Boolean(editing)} title={form.id ? "Edit review" : "Add review"} onClose={() => setEditing(null)}>
+        <div className="stack">
+          <div className="two-col">
+            <Field label="Ebook">
+              <Select value={form.ebook_id} onChange={(event) => setForm({ ...form, ebook_id: event.target.value })}>
+                {data.ebooks.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.title}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Name">
+              <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Reader name" />
+            </Field>
+          </div>
+          <div className="three-col">
+            <Field label="Rating">
+              <Select value={form.rating} onChange={(event) => setForm({ ...form, rating: Number(event.target.value) })}>
+                {[5, 4, 3, 2, 1].map((value) => (
+                  <option key={value} value={value}>
+                    {value} ★
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Source" hint="Editor's takes are labelled on the product page.">
+              <Select value={form.source} onChange={(event) => setForm({ ...form, source: event.target.value })}>
+                <option value="customer">Customer review</option>
+                <option value="editorial">Editor's take</option>
+              </Select>
+            </Field>
+            <Field label="Status">
+              <Select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+                <option value="active">Visible</option>
+                <option value="pending">Pending</option>
+                <option value="hidden">Hidden</option>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Order reference (optional)" hint="Linked to a real paid order? Then it shows as verified.">
+            <Input value={form.order_ref} onChange={(event) => setForm({ ...form, order_ref: event.target.value.toUpperCase() })} placeholder="NBD-…" />
+          </Field>
+          <Field label="Review">
+            <Textarea rows={4} value={form.body} onChange={(event) => setForm({ ...form, body: event.target.value })} />
+          </Field>
+          <div className="inline-actions">
+            <Button onClick={save}>Save review</Button>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </SectionCard>
   );
 }

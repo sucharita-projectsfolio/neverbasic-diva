@@ -27,7 +27,16 @@ import {
 } from "./payments.js";
 import { accountRoute, customerFromRequest } from "./accounts.js";
 import { convertFromInr, countryOf, formatMoney, pricingState, readRates, resolveCurrency } from "./currency.js";
-import { MAX_ATTACHMENT_BYTES, bytesToBase64, deliveryEmailHtml, mailConfig, receiptPdf, sendMail } from "./mailer.js";
+import {
+  MAX_ATTACHMENT_BYTES,
+  bytesToBase64,
+  deliveryEmailHtml,
+  mailConfig,
+  receiptPdf,
+  replyEmailHtml,
+  sendMail,
+  supportEmailHtml,
+} from "./mailer.js";
 
 const ADMIN_COOKIE = "nbd_admin";
 const PUBLIC_KEYS = [
@@ -235,6 +244,7 @@ async function sitePayload(env, request) {
 }
 
 function publicEbook(row) {
+  const ai = safeJson(row.ai_meta, {});
   return {
     id: row.id,
     slug: row.slug,
@@ -253,6 +263,12 @@ function publicEbook(row) {
     sort: row.sort,
     sample: row.sample || "",
     tags: safeJson(row.tags, []),
+    // Only the product-page fields are public — prompts and provider attempts stay private.
+    ai_meta: {
+      faq: Array.isArray(ai.faq) ? ai.faq.slice(0, 6) : [],
+      audience: typeof ai.audience === "string" ? ai.audience.slice(0, 700) : "",
+      painPoints: Array.isArray(ai.painPoints) ? ai.painPoints.slice(0, 6) : [],
+    },
   };
 }
 
@@ -393,6 +409,14 @@ async function createOrder(env, request) {
       .prepare("UPDATE orders SET gateway_order_id = ?, payment_mode = ?, payu_mode = ? WHERE ref = ?")
       .bind(payload.gatewayOrderId, payload.method || payload.mode || method, payload.mode || "", ref)
       .run();
+    if (payload.method === "paypal") {
+      await logEvent(
+        db,
+        ref,
+        "paypal_created",
+        `PayPal order ${payload.gatewayOrderId} · exact charge ${formatMoney(amountCharged, currency)} (${currency})`
+      );
+    }
   } else if (payload.method) {
     await db.prepare("UPDATE orders SET payment_mode = ? WHERE ref = ?").bind(payload.method, ref).run();
   }
@@ -769,17 +793,50 @@ async function createTicket(env, request) {
 
   const ref = `TKT-${U.hex(3).toUpperCase()}`;
   const now = new Date().toISOString();
+  const orderRef = U.clean(body.orderRef, 40);
   await db.batch([
     db
       .prepare(
         "INSERT INTO tickets (id, ref, order_ref, name, email, subject, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)"
       )
-      .bind(U.hex(8), ref, U.clean(body.orderRef, 40), name, email, subject, message, now, now),
+      .bind(U.hex(8), ref, orderRef, name, email, subject, message, now, now),
     db
       .prepare("INSERT INTO ticket_messages (id, ticket_ref, author, body, created_at) VALUES (?, ?, 'customer', ?, ?)")
       .bind(U.hex(8), ref, message, now),
   ]);
+  await notifyOwner(env, request, {
+    kind: "Support message",
+    subject,
+    name,
+    email,
+    orderRef,
+    ref,
+    message,
+  });
   return U.json({ ok: true, ref });
+}
+
+// One helper for "a customer wrote in": always lands in Admin → Support, and in
+// the owner's inbox when email is configured. Email failures never block the form.
+async function notifyOwner(env, request, { kind, subject, name, email, orderRef = "", ref, message }) {
+  try {
+    const db = env.DB;
+    const settings = await getSettings(db);
+    const config = mailConfig(settings, env);
+    if (!config.ready || !settings.support_email) return;
+    const origin = settings.site_url || new URL(request.url).origin;
+    await sendMail(config, {
+      to: settings.support_email,
+      subject: `[${kind}] ${ref} · ${subject}`,
+      html: supportEmailHtml({
+        ticket: { ref, subject, name, email, order_ref: orderRef, message },
+        url: `${origin}/admin`,
+        brand: settings.brand_name || "Neverbasic Diva",
+      }),
+    });
+  } catch (error) {
+    console.error("owner_notify_failed", error && error.message);
+  }
 }
 
 async function getTicket(env, ref, url) {
@@ -811,6 +868,15 @@ async function replyTicket(env, ref, request) {
       .bind(U.hex(8), ref, text, now),
     db.prepare("UPDATE tickets SET status = 'open', updated_at = ? WHERE ref = ?").bind(now, ref),
   ]);
+  await notifyOwner(env, request, {
+    kind: "Support reply",
+    subject: ticket.subject || "Support thread",
+    name: ticket.name,
+    email: ticket.email,
+    orderRef: ticket.order_ref,
+    ref,
+    message: text,
+  });
   return U.json({ ok: true });
 }
 
@@ -833,6 +899,14 @@ async function createRequest(env, request) {
       U.clean(body.budget, 60), new Date().toISOString()
     )
     .run();
+  await notifyOwner(env, request, {
+    kind: "Ebook request",
+    subject: topic || "New ebook request",
+    name,
+    email,
+    ref: `REQ-${U.hex(2).toUpperCase()}`,
+    message: `${message}${body.whatsapp ? `\n\nWhatsApp: ${U.clean(body.whatsapp, 30)}` : ""}`,
+  });
   return U.json({ ok: true });
 }
 
@@ -1279,6 +1353,67 @@ async function handleAdmin(request, env, url, admin) {
       await logEvent(db, ref, "note", U.clean(body.note, 300));
       return U.json({ ok: true });
     }
+    if (action === "message") {
+      const text = U.clean(body.message, 3000);
+      if (text.length < 2) return U.bad("Write the message first.");
+      const email = String(order.email || "").toLowerCase();
+      if (!email) return U.bad("This order has no email address.");
+      const now = new Date().toISOString();
+      let ticket = await db
+        .prepare("SELECT * FROM tickets WHERE LOWER(email) = ? AND order_ref = ? ORDER BY created_at DESC")
+        .bind(email, order.ref)
+        .first();
+      if (!ticket) {
+        const ref = `TKT-${U.hex(3).toUpperCase()}`;
+        await db
+          .prepare(
+            "INSERT INTO tickets (id, ref, order_ref, name, email, subject, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'answered', ?, ?)"
+          )
+          .bind(U.hex(8), ref, order.ref, order.name || "", email, `About your order ${order.ref}`, text, now, now)
+          .run();
+        ticket = { ref, subject: `About your order ${order.ref}`, name: order.name, email, order_ref: order.ref };
+      }
+      await db.batch([
+        db
+          .prepare("INSERT INTO ticket_messages (id, ticket_ref, author, body, created_at) VALUES (?, ?, 'admin', ?, ?)")
+          .bind(U.hex(8), ticket.ref, text, now),
+        db.prepare("UPDATE tickets SET status = 'answered', updated_at = ? WHERE ref = ?").bind(now, ticket.ref),
+      ]);
+      let emailed = false;
+      try {
+        const settings = await getSettings(db);
+        const config = mailConfig(settings, env);
+        if (config.ready) {
+          const origin = settings.site_url || new URL(request.url).origin;
+          await sendMail(config, {
+            to: email,
+            subject: `About your order ${order.ref} · ${settings.brand_name || "Neverbasic Diva"}`,
+            html: replyEmailHtml({
+              ticket,
+              body: text,
+              url: `${origin}/support?ticket=${encodeURIComponent(ticket.ref)}&email=${encodeURIComponent(email)}`,
+              brand: settings.brand_name || "Neverbasic Diva",
+              settings,
+            }),
+          });
+          emailed = true;
+        }
+      } catch (error) {
+        console.error("customer_message_email_failed", error && error.message);
+      }
+      await logEvent(db, order.ref, "message_sent", text.slice(0, 160));
+      await audit(db, admin, "customer_messaged", `${order.ref} · ${ticket.ref}`, request);
+      return U.json({ ok: true, emailed, ticket: ticket.ref });
+    }
+    if (action === "delete") {
+      await db.batch([
+        db.prepare("DELETE FROM order_events WHERE order_ref = ?").bind(ref),
+        db.prepare("DELETE FROM refunds WHERE order_ref = ?").bind(ref),
+        db.prepare("DELETE FROM orders WHERE ref = ?").bind(ref),
+      ]);
+      await audit(db, admin, "order_deleted", `${ref} · ${order.item_title || ""}`, request);
+      return U.json({ ok: true });
+    }
     if (action === "resend") {
       const token = order.download_token || U.hex(12);
       await db.prepare("UPDATE orders SET download_token = ?, email_sent_at = '' WHERE ref = ?").bind(token, ref).run();
@@ -1312,13 +1447,40 @@ async function handleAdmin(request, env, url, admin) {
     if (text.length < 2) return U.bad("Write a reply first.");
     const status = body.status === "closed" ? "closed" : "answered";
     const now = new Date().toISOString();
+    const ticket = await db.prepare("SELECT * FROM tickets WHERE ref = ?").bind(ref).first();
+    if (!ticket) return U.bad("Ticket not found", 404);
     await db.batch([
       db
         .prepare("INSERT INTO ticket_messages (id, ticket_ref, author, body, created_at) VALUES (?, ?, 'admin', ?, ?)")
         .bind(U.hex(8), ref, text, now),
       db.prepare("UPDATE tickets SET status = ?, updated_at = ? WHERE ref = ?").bind(status, now, ref),
     ]);
-    return U.json({ ok: true });
+    // The customer gets the same reply by email, and it stays on their account page.
+    let emailed = false;
+    try {
+      const settings = await getSettings(db);
+      const config = mailConfig(settings, env);
+      if (config.ready && ticket.email) {
+        const origin = settings.site_url || new URL(request.url).origin;
+        await sendMail(config, {
+          to: ticket.email,
+          subject: `Your reply · ${ref} · ${settings.brand_name || "Neverbasic Diva"}`,
+          html: replyEmailHtml({
+            ticket,
+            body: text,
+            url: `${origin}/support?ticket=${encodeURIComponent(ref)}&email=${encodeURIComponent(ticket.email)}`,
+            brand: settings.brand_name || "Neverbasic Diva",
+            settings,
+          }),
+        });
+        emailed = true;
+      }
+      await db.prepare("UPDATE tickets SET updated_at = ? WHERE ref = ?").bind(now, ref).run();
+    } catch (error) {
+      console.error("ticket_reply_email_failed", error && error.message);
+    }
+    await audit(db, admin, "ticket_replied", ref, request);
+    return U.json({ ok: true, emailed });
   }
 
   m = path.match(/^\/requests\/([^/]+)$/);

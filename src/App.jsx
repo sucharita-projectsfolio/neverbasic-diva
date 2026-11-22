@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SiteProvider, useSite, usePath, Link, api, currentReseller, useWishlist } from "./lib/api.jsx";
 import { ToastHost } from "./ui.jsx";
 import { readKit, fillTokens } from "./lib/sitekit.js";
@@ -244,6 +244,67 @@ function Routes() {
   return <Home />;
 }
 
+// Slow colour fields plus a cursor-following light. Both are decorative, sit
+// behind the page and switch themselves off for touch and reduced-motion users.
+function Ambience() {
+  const glow = useRef(null);
+  const progress = useRef(null);
+
+  useEffect(() => {
+    const bar = progress.current;
+    let ticking = false;
+    const paint = () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const ratio = max > 0 ? Math.min(1, window.scrollY / max) : 0;
+      if (bar) bar.style.transform = `scaleX(${ratio})`;
+      ticking = false;
+    };
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(paint);
+    };
+    paint();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const node = glow.current;
+    if (!node || window.matchMedia("(hover: none)").matches) return undefined;
+    let frame = 0;
+    const move = (event) => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        node.style.setProperty("--cursor-x", `${event.clientX}px`);
+        node.style.setProperty("--cursor-y", `${event.clientY}px`);
+        frame = 0;
+      });
+    };
+    window.addEventListener("pointermove", move, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  return (
+    <>
+      <div className="site-aurora" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="cursor-glow" ref={glow} aria-hidden="true" />
+      <div className="scroll-progress" ref={progress} aria-hidden="true" />
+    </>
+  );
+}
+
 function Shell() {
   const path = usePath();
   const { site, error } = useSite();
@@ -313,8 +374,9 @@ function Shell() {
         <Routes />
       ) : (
         <>
+          <Ambience />
           <Nav />
-          <main>
+          <main key={path.replace(/\?.*$/, "")} className="route-stage">
             <Routes />
           </main>
           <Footer />

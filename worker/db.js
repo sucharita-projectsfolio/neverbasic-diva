@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   rating INTEGER DEFAULT 5,
   body TEXT DEFAULT '',
   status TEXT DEFAULT 'pending',
+  source TEXT DEFAULT 'customer',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -322,7 +323,7 @@ export const DEFAULT_SETTINGS = {
   ai_enabled: "1",
   ai_tone: "sharp, warm, human and specific — direct-response copy without fake claims",
   ai_config:
-    '{"temperature":0.85,"providers":[{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","nvidia/nemotron-3.5-lightning:free","inclusionai/ling-3.2-flash:free","recursive/flint-v1.0:free"]}]}',
+    '{"temperature":0.85,"providers":[{"id":"gemini","enabled":true,"apiKey":"","models":["gemini-3.6-flash","gemini-3.5-flash","gemini-3.8-flash","gemini-3.5-flash-lite"]},{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","nvidia/nemotron-3.5-lightning:free","inclusionai/ling-3.2-flash:free","recursive/flint-v1.0:free"]}]}',
 
   // Storefront feature switches (JSON, edited in Studio → Growth).
   store_features:
@@ -380,6 +381,7 @@ export const MIGRATION_ALTERS = [
   "ALTER TABLE orders ADD COLUMN gateway_order_id TEXT DEFAULT ''",
   "ALTER TABLE orders ADD COLUMN customer_id TEXT DEFAULT ''",
   "ALTER TABLE orders ADD COLUMN email_sent_at TEXT DEFAULT ''",
+  "ALTER TABLE reviews ADD COLUMN source TEXT DEFAULT 'customer'",
   "CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT DEFAULT '', email TEXT NOT NULL UNIQUE, phone TEXT DEFAULT '', country TEXT DEFAULT '', pass_hash TEXT DEFAULT '', salt TEXT DEFAULT '', firebase_uid TEXT DEFAULT '', status TEXT DEFAULT 'active', created_at TEXT NOT NULL, last_login_at TEXT DEFAULT '')",
   "CREATE TABLE IF NOT EXISTS customer_sessions (token TEXT PRIMARY KEY, customer_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)",

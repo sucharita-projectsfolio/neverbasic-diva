@@ -124,6 +124,8 @@ const assets = {
 function passthroughEnv() {
   const out = {};
   const keys = [
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
     "GROQ_API_KEY",
     "GROQ_KEY",
     "OPENROUTER_API_KEY",
