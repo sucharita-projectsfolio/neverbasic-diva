@@ -35,14 +35,17 @@ async function firebaseReset(apiKey, email) {
   return true;
 }
 
-async function firebaseExchange(apiKey, mode, email, password) {
+async function firebaseExchange(apiKey, mode, email, password, name = "") {
   const action = mode === "signup" ? "signUp" : "signInWithPassword";
+  // Firebase keeps the display name, and the server copies it onto the customer.
+  const payload = { email, password, returnSecureToken: true };
+  if (mode === "signup" && name) payload.displayName = name;
   const response = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:${action}?key=${encodeURIComponent(apiKey)}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
+      body: JSON.stringify(payload),
     }
   );
   const data = await response.json().catch(() => ({}));
@@ -104,7 +107,7 @@ export default function AccountPage() {
       }
       const result =
         override === "firebase" && firebaseKey
-          ? await firebaseExchange(firebaseKey, mode, form.email, form.password)
+          ? await firebaseExchange(firebaseKey, mode, form.email, form.password, form.name)
           : await api(`/api/account/${mode === "signup" ? "signup" : "login"}`, {
               method: "POST",
               body: mode === "signup" ? form : { email: form.email, password: form.password },
