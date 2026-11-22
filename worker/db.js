@@ -329,7 +329,14 @@ export const DEFAULT_SETTINGS = {
 
   // Storefront feature switches (JSON, edited in Studio → Growth).
   store_features:
-    '{"search":true,"wishlist":true,"recent":true,"coupons":true,"bundles":true,"samples":true,"reviews":true,"journal":true,"newsletter":true,"assistant":true,"whatsappFloat":true,"socialProof":true,"exitIntent":true,"countdown":true,"share":true,"receipts":true,"stickyBuy":true,"trustBadges":true,"upsell":true,"orderTrack":true}',
+    '{"search":true,"wishlist":true,"recent":true,"coupons":true,"bundles":true,"samples":true,"reviews":true,"journal":true,"newsletter":true,"assistant":true,"whatsappFloat":true,"socialProof":true,"exitIntent":true,"countdown":true,"share":true,"receipts":true,"stickyBuy":true,"trustBadges":true,"upsell":true,"orderTrack":true,"orderBump":true,"bundleUpsell":true}',
+
+  // One-extra-ebook add-on offered on the checkout page (AOV). Price is in INR
+  // and always charged from the server, never trusted from the browser.
+  bump_ebook_id: "",
+  bump_price: "49",
+  bump_heading: "Add one more ebook to this order",
+  bump_note: "One-time add-on on this checkout. Both PDFs unlock together and stay on your order page.",
 
   // Payment gateways — every key is set from Admin → Payments, never from code.
   payment_gateway: "auto",

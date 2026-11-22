@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   api,
@@ -299,11 +299,18 @@ export function BundlePage({ slug }) {
   const toast = useToast();
   const bundle = (site.bundles || []).find((row) => row.slug === slug);
   const [form, setForm] = useState({ name: "", email: "", phone: "" });
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => {
+    try {
+      return (new URLSearchParams(window.location.search).get("code") || "").toUpperCase();
+    } catch {
+      return "";
+    }
+  });
   const [coupon, setCoupon] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [method, setMethod] = useState("");
+  const autoCode = useRef(false);
 
   useEffect(() => {
     try {
@@ -313,6 +320,25 @@ export function BundlePage({ slug }) {
       /* ignore */
     }
   }, []);
+
+  // A shared ?code= link applies itself once on the bundle checkout too.
+  useEffect(() => {
+    if (autoCode.current || !bundle || !code) return;
+    autoCode.current = true;
+    let alive = true;
+    api("/api/coupons/validate", { method: "POST", body: { code, amount: bundle.price } })
+      .then((result) => {
+        if (!alive) return;
+        setCoupon(result);
+        toast(`${result.code} applied — ${result.label}`);
+      })
+      .catch((err) => {
+        if (alive) toast(err.message, "bad");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bundle && bundle.id]);
 
   if (!bundle) {
     return (

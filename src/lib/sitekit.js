@@ -810,6 +810,8 @@ export const FEATURE_LABELS = [
   ["trustBadges", "Trust badges", "Refund / no-subscription / licence reassurance."],
   ["upsell", "Order upsell", "Suggests the next ebook after a paid order."],
   ["orderTrack", "Order tracking", "The /track lookup page."],
+  ["orderBump", "Checkout bump", "Offer one extra ebook on the checkout page at a set add-on price."],
+  ["bundleUpsell", "Bundle upsell", "Product pages point to the bundle that already contains that ebook."],
 ];
 
 export const BLOCK_MAP = Object.fromEntries(BLOCK_TYPES.map((entry) => [entry.type, entry]));

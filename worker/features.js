@@ -39,6 +39,8 @@ export const DEFAULT_FEATURES = {
   trustBadges: true,
   upsell: true,
   orderTrack: true,
+  orderBump: true,
+  bundleUpsell: true,
 };
 
 export function readFeatures(settings = {}) {
@@ -187,9 +189,24 @@ export async function siteExtras(env, settings) {
   const paidCount = (recent.results || []).length;
 
   const gateway = gatewayState(settings);
+  const bumpBook = features.orderBump && settings.bump_ebook_id ? ebookMap[settings.bump_ebook_id] : null;
+  const bumpPrice = Math.max(0, U.toInt(settings.bump_price, 0));
+  const bump =
+    bumpBook && bumpPrice > 0
+      ? {
+          id: bumpBook.id,
+          title: bumpBook.title,
+          slug: bumpBook.slug,
+          cover: bumpBook.cover,
+          price: bumpPrice,
+          heading: settings.bump_heading || `Add ${bumpBook.title} for ${bumpPrice}`,
+          note: settings.bump_note || "",
+        }
+      : null;
 
   return {
     features,
+    bump,
     currency: gateway.currency,
     currencySymbol: gateway.symbol,
     payment: gateway.public,
@@ -267,11 +284,26 @@ export async function resolvePurchase(env, settings, body = {}) {
     .bind(U.clean(body.ebookId, 40))
     .first();
   if (!ebook) return { error: "That ebook is not available right now." };
+
+  // Checkout bump: the browser only sends an ebook id; the price comes from the
+  // saved setting so the amount can never be edited from the page.
+  let bump = null;
+  const bumpId = U.clean(body.bumpId, 40);
+  if (features.orderBump && bumpId && bumpId === U.clean(settings.bump_ebook_id, 40) && bumpId !== ebook.id) {
+    const row = await db.prepare("SELECT * FROM ebooks WHERE id = ? AND status = 'active'").bind(bumpId).first();
+    const price = U.toInt(settings.bump_price, 0);
+    if (row && price > 0) bump = { row, price };
+  }
+  const items = bump ? [ebook, bump.row] : [ebook];
   return {
     kind: "ebook",
-    itemTitle: ebook.title,
-    amount: Number(ebook.price) || 0,
-    meta: { ebookIds: [ebook.id] },
+    itemTitle: bump ? `${ebook.title} + ${bump.row.title}` : ebook.title,
+    amount: (Number(ebook.price) || 0) + (bump ? bump.price : 0),
+    meta: {
+      ebookIds: items.map((row) => row.id),
+      items: items.map((row) => ({ id: row.id, title: row.title, slug: row.slug })),
+      bump: bump ? { id: bump.row.id, title: bump.row.title, price: bump.price } : null,
+    },
     ebook,
   };
 }

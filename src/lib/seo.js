@@ -92,6 +92,22 @@ function ebookSeo(ebook, brand, canonical, home) {
           availability: "https://schema.org/InStock",
         },
       },
+      ...(Array.isArray(ai.faq) && ai.faq.length
+        ? [
+            {
+              "@context": "https://schema.org",
+              "@type": "FAQPage",
+              mainEntity: ai.faq
+                .filter((row) => row && row.q && row.a)
+                .slice(0, 8)
+                .map((row) => ({
+                  "@type": "Question",
+                  name: String(row.q),
+                  acceptedAnswer: { "@type": "Answer", text: String(row.a) },
+                })),
+            },
+          ]
+        : []),
     ],
   };
 }

@@ -230,6 +230,23 @@ function seoFor(path, data, origin, search) {
             { "@type": "ListItem", position: 3, name: ebook.title, item: canonical },
           ],
         },
+        // Rich results: the product FAQ written by the studio.
+        ...(Array.isArray(ai.faq) && ai.faq.length
+          ? [
+              {
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                mainEntity: ai.faq
+                  .filter((row) => row && row.q && row.a)
+                  .slice(0, 8)
+                  .map((row) => ({
+                    "@type": "Question",
+                    name: String(row.q),
+                    acceptedAnswer: { "@type": "Answer", text: String(row.a) },
+                  })),
+              },
+            ]
+          : []),
       ],
     };
   }

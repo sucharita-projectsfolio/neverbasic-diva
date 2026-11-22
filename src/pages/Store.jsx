@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   currencyConfigFor,
@@ -93,6 +93,10 @@ export function EbookPage({ slug }) {
   const ebook = (site.ebooks || []).find((book) => book.slug === slug);
   const others = (site.ebooks || []).filter((book) => book.slug !== slug).slice(0, 3);
   const [sampleOpen, setSampleOpen] = useState(false);
+  const bundleOffer =
+    ebook && site.features?.bundleUpsell !== false && site.features?.bundles !== false
+      ? (site.bundles || []).find((bundle) => (bundle.items || []).some((item) => item.id === ebook.id))
+      : null;
   useTrackRecent(ebook);
 
   if (!ebook) {
@@ -214,6 +218,23 @@ export function EbookPage({ slug }) {
                 </div>
               ) : null}
             </Reveal>
+            {bundleOffer ? (
+              <Reveal delay={220}>
+                <Link to={`/bundle/${bundleOffer.slug}`} className="bundle-upsell">
+                  <div>
+                    <span className="eyebrow">better together</span>
+                    <strong>
+                      This + {Math.max(0, (bundleOffer.count || 1) - 1)} more for {money(bundleOffer.price)}
+                    </strong>
+                    <small>
+                      {bundleOffer.mrp > bundleOffer.price ? `Save ${money(bundleOffer.mrp - bundleOffer.price)} · ` : ""}
+                      {bundleOffer.count || 1} PDFs, one payment
+                    </small>
+                  </div>
+                  <span className="btn btn-secondary btn-sm">See the bundle →</span>
+                </Link>
+              </Reveal>
+            ) : null}
             <Reveal delay={240} className="detail-after">
               <h3>What happens after you pay</h3>
               <ol>
@@ -289,10 +310,20 @@ export function Checkout({ ebookId }) {
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => {
+    try {
+      return (new URLSearchParams(window.location.search).get("code") || "").toUpperCase();
+    } catch {
+      return "";
+    }
+  });
   const [coupon, setCoupon] = useState(null);
   const [codeBusy, setCodeBusy] = useState(false);
   const [method, setMethod] = useState("");
+  const [withBump, setWithBump] = useState(false);
+  const autoCode = useRef(false);
+  const bump = site.bump && ebook && site.bump.id !== ebook.id ? site.bump : null;
+  const subtotal = (ebook ? Number(ebook.price) || 0 : 0) + (withBump && bump ? bump.price : 0);
 
   useEffect(() => {
     try {
@@ -302,6 +333,26 @@ export function Checkout({ ebookId }) {
       /* ignore */
     }
   }, []);
+
+  // A coupon link (?code=XYZ) applies itself once, so a campaign never loses the
+  // discount to a forgotten copy-paste.
+  useEffect(() => {
+    if (autoCode.current || !ebook || !code || site.features?.coupons === false) return;
+    autoCode.current = true;
+    let alive = true;
+    api("/api/coupons/validate", { method: "POST", body: { code, amount: subtotal } })
+      .then((result) => {
+        if (!alive) return;
+        setCoupon(result);
+        toast(`${result.code} applied — ${result.label}`);
+      })
+      .catch((err) => {
+        if (alive) toast(err.message, "bad");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ebook && ebook.id]);
 
   if (!ebook) {
     return (
@@ -317,7 +368,7 @@ export function Checkout({ ebookId }) {
 
   const payment = site.settings.payment || {};
   const gateway = site.payment || {};
-  const total = coupon ? coupon.total : ebook.price;
+  const total = coupon ? coupon.total : subtotal;
   const methods = methodsForCurrency({ ...payment, ...gateway }, currency);
   const activeMethod = methods.find((row) => row.id === method) || methods[0] || null;
 
@@ -325,7 +376,7 @@ export function Checkout({ ebookId }) {
     if (!code.trim()) return;
     setCodeBusy(true);
     try {
-      const result = await api("/api/coupons/validate", { method: "POST", body: { code, amount: ebook.price } });
+      const result = await api("/api/coupons/validate", { method: "POST", body: { code, amount: subtotal } });
       setCoupon(result);
       toast(`${result.code} applied — ${result.label}`);
     } catch (err) {
@@ -333,6 +384,24 @@ export function Checkout({ ebookId }) {
       toast(err.message, "bad");
     } finally {
       setCodeBusy(false);
+    }
+  }
+
+  async function toggleBump(next) {
+    setWithBump(next);
+    if (!coupon) return;
+    try {
+      const result = await api("/api/coupons/validate", {
+        method: "POST",
+        body: {
+          code: coupon.code,
+          amount: (Number(ebook.price) || 0) + (next && bump ? bump.price : 0),
+        },
+      });
+      setCoupon(result);
+    } catch (err) {
+      setCoupon(null);
+      toast(`${err.message} Remove the add-on, or apply the code again without it.`, "bad");
     }
   }
 
@@ -352,6 +421,7 @@ export function Checkout({ ebookId }) {
           ...form,
           ebookId: ebook.id,
           kind: "ebook",
+          bumpId: withBump && bump ? bump.id : "",
           code: coupon ? coupon.code : "",
           currency,
           method: activeMethod ? activeMethod.id : "",
@@ -410,6 +480,23 @@ export function Checkout({ ebookId }) {
                 autoComplete="tel"
               />
             </Field>
+            {bump ? (
+              <label className={`bump-card${withBump ? " on" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={withBump}
+                  onChange={(event) => toggleBump(event.target.checked)}
+                />
+                <Cover ebook={bump} />
+                <span className="bump-copy">
+                  <strong>{bump.heading}</strong>
+                  <span>
+                    {bump.title} · {money(bump.price)}
+                  </span>
+                  {bump.note ? <small>{bump.note}</small> : null}
+                </span>
+              </label>
+            ) : null}
             {site.features?.coupons ? (
               <div className="coupon-row">
                 <Input
@@ -491,6 +578,12 @@ export function Checkout({ ebookId }) {
             <span>Subtotal</span>
             <span>{money(ebook.price)}</span>
           </div>
+          {withBump && bump ? (
+            <div className="summary-row">
+              <span>Add-on · {bump.title}</span>
+              <span>{money(bump.price)}</span>
+            </div>
+          ) : null}
           <div className="summary-row">
             <span>Delivery</span>
             <span>Instant · free</span>

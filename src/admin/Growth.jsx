@@ -75,6 +75,10 @@ function Features({ data, reload }) {
     newsletter_heading: settings.newsletter_heading || "",
     newsletter_note: settings.newsletter_note || "",
     whatsapp_note: settings.whatsapp_note || "",
+    bump_ebook_id: settings.bump_ebook_id || "",
+    bump_price: settings.bump_price || "49",
+    bump_heading: settings.bump_heading || "",
+    bump_note: settings.bump_note || "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -119,6 +123,54 @@ function Features({ data, reload }) {
             </div>
           ))}
         </div>
+      </Card>
+
+      <Card
+        title="Checkout bump"
+        hint="Offer one extra ebook under the buyer's details, at a price you set. The price is charged server-side, so the page cannot change it. Set the ebook to Off to hide the bump instantly."
+      >
+        <div className="two-col">
+          <Field label="Add-on ebook">
+            <Select
+              value={copy.bump_ebook_id}
+              onChange={(event) => setCopy({ ...copy, bump_ebook_id: event.target.value })}
+            >
+              <option value="">Off — no add-on</option>
+              {(data.ebooks || [])
+                .filter((row) => row.status === "active")
+                .map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.title}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <Field label="Add-on price (INR)" hint="Charged instead of that ebook's normal price.">
+            <Input
+              type="number"
+              min="1"
+              value={copy.bump_price}
+              onChange={(event) => setCopy({ ...copy, bump_price: event.target.value })}
+            />
+          </Field>
+        </div>
+        <Field label="Bump heading">
+          <Input
+            value={copy.bump_heading}
+            onChange={(event) => setCopy({ ...copy, bump_heading: event.target.value })}
+            placeholder="Add one more for ₹49"
+          />
+        </Field>
+        <Field label="Bump note" hint="One line under the title. Keep it factual.">
+          <Textarea
+            rows={2}
+            value={copy.bump_note}
+            onChange={(event) => setCopy({ ...copy, bump_note: event.target.value })}
+          />
+        </Field>
+        <Button variant="secondary" onClick={save} loading={saving}>
+          Save bump
+        </Button>
       </Card>
 
       <Card title="Conversion copy" hint="The words around the exit offer, newsletter and WhatsApp button.">
