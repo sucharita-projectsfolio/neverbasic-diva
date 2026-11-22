@@ -832,23 +832,8 @@ export async function adminRoute(request, env, url, admin) {
     return U.json({ ok: true });
   }
 
-  /* --------------------------------- backup --------------------------------- */
-  if (path === "/backup" && method === "GET") {
-    const tables = ["settings", "ebooks", "orders", "coupons", "bundles", "posts", "subscribers", "reviews", "resellers", "testimonials"];
-    const dump = { exported_at: new Date().toISOString(), version: 1, tables: {} };
-    for (const table of tables) {
-      const rows = await db.prepare(`SELECT * FROM ${table}`).all();
-      dump.tables[table] = rows.results || [];
-    }
-    await audit(db, admin, "backup_download", `${tables.length} tables`, request);
-    return new Response(JSON.stringify(dump, null, 2), {
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "content-disposition": `attachment; filename="neverbasic-diva-backup-${new Date().toISOString().slice(0, 10)}.json"`,
-        "cache-control": "no-store",
-      },
-    });
-  }
+  // Content backups (with images and restore) live in worker/backup.js and are
+  // mounted by handleAdmin before this router.
 
   return null;
 }

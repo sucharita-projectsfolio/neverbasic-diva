@@ -8,7 +8,9 @@
   },
   "description": "Neverbasic Diva — premium micro-ebooks, resell rights, and a fully self-managed admin panel.",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/guard-content.mjs && node scripts/build.mjs",
+    "guard": "node scripts/guard-content.mjs",
+    "content:approve": "node scripts/guard-content.mjs --approve",
     "start": "npm run build && wrangler dev --port 3000 --ip 0.0.0.0",
     "dev": "npm run build && wrangler dev --port 3000 --ip 0.0.0.0"
   },

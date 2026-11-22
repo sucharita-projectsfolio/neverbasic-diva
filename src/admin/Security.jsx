@@ -82,17 +82,17 @@ export default function Security({ data, reload }) {
       </Card>
 
       <Card
-        title="Backup"
-        hint="Download every setting, ebook, order, coupon, bundle, post and subscriber as one JSON file. Keep it somewhere safe."
+        title="Backup & restore"
+        hint="Daily automatic snapshots plus a full download with every setting, ebook, order and uploaded cover image. Restore is merge-only — it never deletes newer content."
         actions={
-          <a className="btn btn-secondary btn-sm" href="/api/admin/backup">
-            Download backup
+          <a className="btn btn-secondary btn-sm" href="/api/admin/backup/export">
+            Download full backup
           </a>
         }
       >
         <p className="admin-muted">
-          The export contains private keys and buyer emails, so treat the file like a password. It is served
-          only to a signed-in admin and never cached.
+          Manage snapshots and restore a file from Admin → Growth → Backup & safety. The export contains private keys
+          and buyer emails, so treat it like a password. It is served only to a signed-in admin and never cached.
         </p>
       </Card>
 

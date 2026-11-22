@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link } from "../lib/api.jsx";
 
 // The hero centrepiece: a physical-looking ebook built from real CSS 3D layers.
@@ -20,6 +20,7 @@ const PARTICLES = [
 
 export default function Ebook3D({ ebook, price, note, badge, href }) {
   const scene = useRef(null);
+  const [brokenCover, setBrokenCover] = useState(false);
 
   useEffect(() => {
     const node = scene.current;
@@ -94,8 +95,8 @@ export default function Ebook3D({ ebook, price, note, badge, href }) {
           <div className="book3d-pages" aria-hidden="true" />
           <div className="book3d-back" aria-hidden="true" />
           <div className="book3d-cover">
-            {cover ? (
-              <img src={cover} alt="" width="600" height="800" loading="eager" decoding="async" />
+            {cover && !brokenCover ? (
+              <img src={cover} alt="" width="600" height="800" loading="eager" decoding="async" onError={() => setBrokenCover(true)} />
             ) : (
               <span className="book3d-cover-fallback">
                 <small>neverbasic diva</small>

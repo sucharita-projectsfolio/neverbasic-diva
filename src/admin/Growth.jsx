@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 // Admin ledgers stay in the INR base currency.
 import { api, moneyBase as money, prettyDate, prettyDateTime } from "../lib/api.jsx";
 import { FEATURE_LABELS } from "../lib/sitekit.js";
@@ -31,6 +31,7 @@ function Card({ title, hint, children, actions }) {
 
 const TABS = [
   ["features", "Features"],
+  ["backup", "Backup & safety"],
   ["ads", "Meta ads"],
   ["coupons", "Coupons"],
   ["bundles", "Bundles"],
@@ -51,6 +52,7 @@ export default function Growth({ data, reload }) {
         ))}
       </div>
       {tab === "features" ? <Features data={data} reload={reload} /> : null}
+      {tab === "backup" ? <Backup data={data} reload={reload} /> : null}
       {tab === "ads" ? <Ads data={data} reload={reload} /> : null}
       {tab === "coupons" ? <Coupons data={data} reload={reload} /> : null}
       {tab === "bundles" ? <Bundles data={data} reload={reload} /> : null}
@@ -811,6 +813,228 @@ function Subscribers({ data, reload }) {
         </table>
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------ backup & safety ---------------------------- */
+
+function Backup({ data, reload }) {
+  const toast = useToast();
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [phrase, setPhrase] = useState("");
+  const [file, setFile] = useState(null);
+  const [includeLedger, setIncludeLedger] = useState(true);
+
+  async function refresh() {
+    try {
+      setStatus(await api("/api/admin/backup/status"));
+    } catch (error) {
+      toast(error.message, "bad");
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    // Status is a point-in-time reading; it is refreshed after every action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function download(path) {
+    const link = document.createElement("a");
+    link.href = path;
+    link.download = "";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function snapshot() {
+    setBusy("snapshot");
+    try {
+      await api("/api/admin/backup/snapshot", { method: "POST" });
+      toast("Snapshot saved");
+      await refresh();
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreLatest() {
+    if (phrase.trim() !== "RESTORE") return toast("Type RESTORE first", "bad");
+    setBusy("latest");
+    try {
+      const result = await api("/api/admin/backup/restore-latest", {
+        method: "POST",
+        body: { confirm: "RESTORE", includeLedger },
+      });
+      toast(`Restored backup from ${prettyDateTime(result.backup_at)}`);
+      setPhrase("");
+      await refresh();
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreFile() {
+    if (!file) return toast("Choose a backup file first", "bad");
+    if (phrase.trim() !== "RESTORE") return toast("Type RESTORE first", "bad");
+    if (file.size > 30 * 1024 * 1024) return toast("That backup file is too large", "bad");
+    setBusy("file");
+    try {
+      let backup;
+      try {
+        backup = JSON.parse(await file.text());
+      } catch {
+        throw new Error("That file is not valid JSON.");
+      }
+      const result = await api("/api/admin/backup/restore", {
+        method: "POST",
+        body: { backup, confirm: "RESTORE", includeLedger },
+      });
+      const restored = result.restored || {};
+      toast(`Restored ${Object.entries(restored).filter(([, value]) => typeof value === "number").reduce((sum, [, value]) => sum + value, 0)} rows`);
+      setPhrase("");
+      setFile(null);
+      await refresh();
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const counts = status?.counts || {};
+  const rows = [
+    ["Products", counts.ebooks],
+    ["Reviews", counts.reviews],
+    ["Testimonials", counts.testimonials],
+    ["Bundles", counts.bundles],
+    ["Journal posts", counts.posts],
+    ["Coupons", counts.coupons],
+    ["Orders", counts.orders],
+    ["Customers", counts.customers],
+  ];
+  const lastAt = status?.last_backup_at || data.settings?.content_backup_at || "";
+
+  return (
+    <div className="stack-lg">
+      <Card
+        title="Your content is kept outside the code"
+        hint="Products, copy, prices, orders and uploaded images live in the database and file storage — not in the GitHub repo. A code update cannot change them. A private snapshot is taken automatically once a day, and you can take one before any update."
+      >
+        {status && !status.available ? (
+          <p className="form-error">
+            File storage (FILES) is not connected, so automatic snapshots cannot be saved. You can still download a full
+            backup below.
+          </p>
+        ) : null}
+        <div className="three-col">
+          <div>
+            <span className="field-label">Last automatic snapshot</span>
+            <strong>{lastAt ? prettyDateTime(lastAt) : "Not taken yet"}</strong>
+            <p className="field-hint">
+              {status?.latest ? `Latest: ${prettyDateTime(status.latest.created_at)}` : "Open this tab or any store page once a day to keep it current."}
+            </p>
+          </div>
+          <div>
+            <span className="field-label">Previous snapshot</span>
+            <strong>{status?.previous ? prettyDateTime(status.previous.created_at) : "—"}</strong>
+            <p className="field-hint">The last two snapshots are kept, so a bad save can be rolled back.</p>
+          </div>
+          <div>
+            <span className="field-label">Last restore</span>
+            <strong>{status?.restore_at ? prettyDateTime(status.restore_at) : "Never"}</strong>
+            <p className="field-hint">A snapshot of the live state is saved before every restore.</p>
+          </div>
+        </div>
+        <div className="admin-table-wrap" style={{ marginTop: 18 }}>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>In the vault</th>
+                <th>Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([label, count]) => (
+                <tr key={label}>
+                  <td>{label}</td>
+                  <td>{Number.isFinite(count) ? count : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="row-actions" style={{ marginTop: 18 }}>
+          <Button onClick={snapshot} loading={busy === "snapshot"}>
+            Take a snapshot now
+          </Button>
+          <Button variant="secondary" onClick={() => download("/api/admin/backup/export")}>
+            Download full backup (with images)
+          </Button>
+          {status?.latest ? (
+            <Button variant="secondary" onClick={() => download("/api/admin/backup/latest")}>
+              Download latest snapshot
+            </Button>
+          ) : null}
+          {status?.before_restore ? (
+            <Button variant="secondary" onClick={() => download("/api/admin/backup/before-restore")}>
+              Download pre-restore state
+            </Button>
+          ) : null}
+        </div>
+        <p className="field-hint" style={{ marginTop: 12 }}>
+          The full backup is a single JSON file with every product, page copy, review, order and uploaded cover image. It
+          also contains private settings such as payment and AI keys, so keep it somewhere safe and never share it. Large
+          PDF files stay in file storage (code updates never touch them) — keep your original PDFs too.
+        </p>
+      </Card>
+
+      <Card
+        title="Restore without deleting anything"
+        hint="Restoring adds or updates rows from the backup. It never deletes a product or order that is not in the file, and it never overwrites an existing order status. Only use this when something actually went missing."
+      >
+        <div className="stack">
+          <Field label="Type RESTORE to unlock the buttons">
+            <Input value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder="RESTORE" />
+          </Field>
+          <Toggle
+            checked={includeLedger}
+            onChange={setIncludeLedger}
+            label="Also add missing orders and customer accounts from the backup"
+          />
+          <div className="row-actions">
+            <Button variant="secondary" onClick={restoreLatest} loading={busy === "latest"} disabled={!status?.latest || phrase.trim() !== "RESTORE"}>
+              Restore latest automatic snapshot
+            </Button>
+          </div>
+        </div>
+        <hr className="admin-divider" />
+        <div className="stack">
+          <Field label="Or restore a downloaded backup file">
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => setFile(event.target.files?.[0] || null)}
+            />
+          </Field>
+          {file ? <p className="field-hint">{file.name} · {Math.round(file.size / 1024)} KB</p> : null}
+          <div className="row-actions">
+            <Button onClick={restoreFile} loading={busy === "file"} disabled={!file || phrase.trim() !== "RESTORE"}>
+              Restore this file
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 

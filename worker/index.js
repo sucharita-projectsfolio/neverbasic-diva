@@ -27,6 +27,7 @@ import {
 } from "./payments.js";
 import { accountRoute, customerFromRequest } from "./accounts.js";
 import { sendMetaPurchase } from "./meta.js";
+import { backupStatus, beforeRestoreBackup, createSnapshot, exportBackup, latestBackup, maybeAutoBackup, restoreLatest, restoreSnapshot } from "./backup.js";
 import { servePage } from "./seo.js";
 import { convertFromInr, countryOf, formatMoney, pricingState, readRates, resolveCurrency } from "./currency.js";
 import {
@@ -71,6 +72,9 @@ export default {
 
     try {
       await ensureReady(env);
+      // Once a day, keep a private snapshot of products, copy and images so a
+      // bad code deploy can never leave the store with nothing to restore.
+      await maybeAutoBackup(env).catch((error) => console.error("auto_backup_failed", error && error.message));
       const blocked = guardRequest(request, url);
       if (blocked) return withSecurityHeaders(blocked);
       const response = await handleApi(request, env, url);
@@ -1138,6 +1142,83 @@ async function handleAdmin(request, env, url, admin) {
   const db = env.DB;
   const path = url.pathname.replace(/^\/api\/admin/, "");
   const method = request.method.toUpperCase();
+
+  /* ---------------------------- content vault ----------------------------- */
+  if (path === "/backup/status" && method === "GET") return U.json(await backupStatus(env));
+
+  if (path === "/backup/export" && method === "GET") {
+    const backup = await exportBackup(env);
+    const name = `neverbasic-diva-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    await audit(db, admin, "backup_exported", `${Object.values(backup.counts).reduce((a, b) => a + b, 0)} rows, ${Object.keys(backup.assets || {}).length} images`, request);
+    return new Response(JSON.stringify(backup), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="${name}"`,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  if (path === "/backup/latest" && method === "GET") {
+    const entry = await latestBackup(env);
+    if (!entry) return U.bad("No automatic backup exists yet.", 404);
+    return new Response(JSON.stringify(entry), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="neverbasic-diva-auto-${String(entry.created_at || "").slice(0, 10)}.json"`,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  if (path === "/backup/before-restore" && method === "GET") {
+    const entry = await beforeRestoreBackup(env);
+    if (!entry) return U.bad("No pre-restore snapshot exists yet.", 404);
+    return new Response(JSON.stringify(entry), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="neverbasic-diva-before-restore-${String(entry.created_at || "").slice(0, 10)}.json"`,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  if (path === "/backup/snapshot" && method === "POST") {
+    const snapshot = await createSnapshot(env, { reason: "manual" });
+    await audit(db, admin, "backup_created", snapshot.created_at, request);
+    return U.json({
+      ok: true,
+      stored: snapshot.stored,
+      created_at: snapshot.created_at,
+      counts: snapshot.counts,
+    });
+  }
+
+  if (path === "/backup/restore-latest" && method === "POST") {
+    const body = await readJson(request);
+    if (body.confirm !== "RESTORE") return U.bad("Type RESTORE to confirm.");
+    try {
+      const result = await restoreLatest(env, { includeLedger: body.includeLedger !== false });
+      await audit(db, admin, "backup_restored", `latest ${result.backup_at}`, request);
+      return U.json({ ok: true, ...result });
+    } catch (error) {
+      return U.bad((error && error.message) || "Restore failed.");
+    }
+  }
+
+  if (path === "/backup/restore" && method === "POST") {
+    const length = Number(request.headers.get("content-length") || 0);
+    if (length > 35 * 1024 * 1024) return U.bad("That backup file is too large.", 413);
+    const body = await readJson(request);
+    if (body.confirm !== "RESTORE") return U.bad("Type RESTORE to confirm.");
+    try {
+      const result = await restoreSnapshot(env, body.backup, { includeLedger: body.includeLedger !== false });
+      await audit(db, admin, "backup_restored", "uploaded file", request);
+      return U.json({ ok: true, restored: result });
+    } catch (error) {
+      return U.bad((error && error.message) || "That backup could not be restored.");
+    }
+  }
 
   const featureResponse = await adminRoute(request, env, url, admin);
   if (featureResponse) return featureResponse;

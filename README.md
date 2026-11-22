@@ -310,8 +310,9 @@ src/
   pages/         Home, Store (library/detail/checkout/order/track), Support (help/request/refund/policies/resell/portal)
   admin/Admin.jsx admin studio shell, orders, ebooks, payments, content
   admin/AiStudio.jsx AI providers, ebook analyser, store generator
-  admin/Growth.jsx coupons, bundles, journal, subscribers, reviews, feature switches
-  admin/Security.jsx sessions, audit log, backups
+  admin/Growth.jsx coupons, bundles, journal, subscribers, reviews, feature switches, backup & restore
+  admin/Security.jsx sessions and audit log
+  worker/backup.js automatic snapshots, full export with images, merge-only restore
   admin/Studio.jsx pages, themes, copy, look, AI section rewrite
   pages/Extras.jsx search, wishlist, journal, bundles, assistant and growth widgets
   styles.css     full design system (storefront + studio)
@@ -319,11 +320,30 @@ src/
   admin.css      growth/AI admin styles
 public/covers/   seed cover art
 scripts/build.mjs build pipeline
+scripts/guard-content.mjs fails the build on destructive content changes
+content-lock.json protected image hashes + live storage binding names
+AGENTS.md        data-safety rules for every human or AI contributor
 wrangler.toml    local bindings (D1, R2, assets)
 sites.manifest.json deployment manifest
 ```
 
 ---
+
+## Data safety
+
+Products, prices, copy, reviews, orders and uploaded images live in the database
+and file storage — not in this repository. A code update cannot change them, and
+the build fails if a change would delete a protected cover, add a destructive
+migration or point the app at a different database/bucket.
+
+Before any update, use **Admin → Growth → Backup & safety** to take a snapshot or
+download the full backup (content + orders + uploaded images). Restore is
+merge-only: it adds/updates rows and never deletes newer content. The full policy
+for human or AI contributors is in [AGENTS.md](AGENTS.md).
+
+Run `npm run guard` to check content safety, or `npm run build` which runs it
+automatically. `npm run content:approve` is only for a deliberate image change
+requested by the owner.
 
 ## Notes
 

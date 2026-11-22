@@ -327,6 +327,14 @@ export const DEFAULT_SETTINGS = {
   ai_config:
     '{"temperature":0.85,"providers":[{"id":"gemini","enabled":true,"apiKey":"","models":["gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite"]},{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-lightning:free","recursive/flint-v1.0:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","inclusionai/ling-3.2-flash:free"]}]}',
 
+  // Content safety vault metadata. The snapshots themselves live in private
+  // file storage (R2 / Netlify Blobs); these keys only record when the last one
+  // ran, so the site can take one automatically once a day.
+  content_backup_at: "",
+  content_backup_counts: "{}",
+  content_backup_stored: "0",
+  content_restore_at: "",
+
   // Storefront feature switches (JSON, edited in Studio → Growth).
   store_features:
     '{"search":true,"wishlist":true,"recent":true,"coupons":true,"bundles":true,"samples":true,"reviews":true,"journal":true,"newsletter":true,"assistant":true,"whatsappFloat":true,"socialProof":true,"exitIntent":true,"countdown":true,"share":true,"receipts":true,"stickyBuy":true,"trustBadges":true,"upsell":true,"orderTrack":true,"orderBump":true,"bundleUpsell":true}',

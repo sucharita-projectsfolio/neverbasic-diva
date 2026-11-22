@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "note": "Protected storefront files and live storage bindings. npm run build fails if these change without npm run content:approve.",
+  "approved_at": "2026-11-22T16:18:48.528Z",
+  "files": {
+    "public/covers/cover-1.jpg": {
+      "sha256": "834b9767bc088458acca935345beee720d4236ae2a7f56bee0ae4493b91311ab",
+      "bytes": 139061
+    },
+    "public/covers/cover-2.jpg": {
+      "sha256": "0d4568d225db051d6f307dcafe8f642d251c54221ad8909add8350ca7f76d2b0",
+      "bytes": 135085
+    },
+    "public/covers/cover-3.jpg": {
+      "sha256": "3d3c414b36a4e70f002beeb7679eca5a30a99f68270bd48967c1e7ed7659bf3c",
+      "bytes": 47136
+    },
+    "public/covers/cover-4.jpg": {
+      "sha256": "a7b3f86fe67c853cee1d05569b41129a4a48d769811f0c33280b25ea84a317ac",
+      "bytes": 83115
+    },
+    "public/favicon.svg": {
+      "sha256": "0dd1ce74efcff2ba5d7bea78087a3a422adaa3fedaa773a50f29946eac5e7ab0",
+      "bytes": 369
+    }
+  },
+  "bindings": {
+    "database_name": "neverbasic-diva",
+    "database_id": "00000000-0000-0000-0000-000000000001",
+    "bucket_name": "neverbasic-diva-files"
+  }
+}

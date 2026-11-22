@@ -201,7 +201,8 @@ export function Modal({ open, title, onClose, children, footer, wide = false }) 
 
 export function Cover({ ebook, className = "", lazy = true }) {
   const src = ebook?.cover || "";
-  if (!src) {
+  const [broken, setBroken] = useState(false);
+  if (!src || broken) {
     return (
       <div className={cx("cover cover-fallback", className)}>
         <span>{ebook?.title || "Neverbasic Diva"}</span>
@@ -217,6 +218,7 @@ export function Cover({ ebook, className = "", lazy = true }) {
       height="800"
       loading={lazy ? "lazy" : "eager"}
       decoding="async"
+      onError={() => setBroken(true)}
     />
   );
 }
