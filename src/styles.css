@@ -330,6 +330,27 @@ ul, ol {
   line-height: 1.5;
 }
 
+.form-note {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .field-error,
 .form-error {
   color: #a83f34;

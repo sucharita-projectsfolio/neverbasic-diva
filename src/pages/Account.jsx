@@ -4,6 +4,37 @@ import { Button, Field, Input, Spinner, StatusPill, useToast } from "../ui.jsx";
 
 const emptyForm = { name: "", email: "", password: "", phone: "" };
 
+// Firebase returns terse codes; buyers need a sentence they can act on.
+function firebaseError(code) {
+  const map = {
+    EMAIL_EXISTS: "That Firebase account already exists — sign in instead.",
+    INVALID_PASSWORD: "Email or password is incorrect.",
+    INVALID_LOGIN_CREDENTIALS: "Email or password is incorrect.",
+    EMAIL_NOT_FOUND: "No Firebase account uses that email yet.",
+    OPERATION_NOT_ALLOWED: "Email sign-in is switched off in the Firebase console. Enable Email/Password under Authentication → Sign-in method.",
+    CONFIGURATION_NOT_FOUND: "Firebase Authentication is not set up for this project yet. Open Authentication in the Firebase console and click Get started.",
+    API_KEY_INVALID: "The Firebase Web API key saved in admin is not valid.",
+    USER_DISABLED: "That account is disabled in Firebase.",
+    WEAK_PASSWORD: "Use at least 8 characters.",
+    TOO_MANY_ATTEMPTS_TRY_LATER: "Too many attempts. Try again in a few minutes.",
+  };
+  return map[code] || String(code || "Firebase sign-in failed").replace(/_/g, " ").toLowerCase();
+}
+
+async function firebaseReset(apiKey, email) {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requestType: "PASSWORD_RESET", email }),
+    }
+  );
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(firebaseError(data.error && data.error.message));
+  return true;
+}
+
 async function firebaseExchange(apiKey, mode, email, password) {
   const action = mode === "signup" ? "signUp" : "signInWithPassword";
   const response = await fetch(
@@ -16,10 +47,7 @@ async function firebaseExchange(apiKey, mode, email, password) {
   );
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.idToken) {
-    const code = (data.error && data.error.message) || "Firebase sign-in failed";
-    if (code === "EMAIL_EXISTS") throw new Error("That Firebase account already exists — sign in instead.");
-    if (code === "INVALID_PASSWORD" || code === "INVALID_LOGIN_CREDENTIALS") throw new Error("Email or password is incorrect.");
-    throw new Error(code.replace(/_/g, " ").toLowerCase());
+    throw new Error(firebaseError((data.error && data.error.message) || "Firebase sign-in failed"));
   }
   return api("/api/account/firebase", { method: "POST", body: { idToken: data.idToken } });
 }
@@ -32,6 +60,7 @@ export default function AccountPage() {
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [resetSent, setResetSent] = useState(false);
   const [data, setData] = useState(null);
   const [profile, setProfile] = useState({ name: "", phone: "", country: "" });
   const [passwords, setPasswords] = useState({ current: "", next: "" });
@@ -67,6 +96,12 @@ export default function AccountPage() {
     setBusy(true);
     try {
       const { firebaseKey } = session || {};
+      if (mode === "reset") {
+        if (!firebaseKey) throw new Error("Password reset is not available yet. Message support and we will sort it out.");
+        await firebaseReset(firebaseKey, form.email);
+        setResetSent(true);
+        return;
+      }
       const result =
         override === "firebase" && firebaseKey
           ? await firebaseExchange(firebaseKey, mode, form.email, form.password)
@@ -169,20 +204,27 @@ export default function AccountPage() {
                 autoComplete="email"
               />
             </Field>
-            <Field label="Password" hint={mode === "signup" ? "At least 8 characters." : ""}>
-              <Input
-                required
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              />
-            </Field>
+            {mode !== "reset" ? (
+              <Field label="Password" hint={mode === "signup" ? "At least 8 characters." : ""}>
+                <Input
+                  required
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                />
+              </Field>
+            ) : null}
+            {resetSent ? (
+              <p className="form-note">
+                Reset link sent to <strong>{form.email}</strong>. Open it, set a new password, then sign in here.
+              </p>
+            ) : null}
             {error ? <p className="form-error">{error}</p> : null}
             <Button type="submit" size="lg" loading={busy} className="btn-block">
-              {mode === "signup" ? "Create my account" : "Sign in"}
+              {mode === "reset" ? "Send reset link" : mode === "signup" ? "Create my account" : "Sign in"}
             </Button>
-            {session.firebaseKey ? (
+            {session.firebaseKey && mode !== "reset" ? (
               <Button
                 type="button"
                 variant="secondary"
@@ -196,7 +238,22 @@ export default function AccountPage() {
           </form>
           <p className="field-hint">
             Bought as a guest? Create an account with the same email — every past order attaches itself
-            automatically. Forgot your password? <Link to="/support">Message support</Link>.
+            automatically.{" "}
+            {session.firebaseKey ? (
+              mode === "reset" ? (
+                <button type="button" className="link-btn" onClick={() => { setMode("login"); setResetSent(false); }}>
+                  Back to sign in
+                </button>
+              ) : (
+                <button type="button" className="link-btn" onClick={() => { setMode("reset"); setError(""); }}>
+                  Forgot your password?
+                </button>
+              )
+            ) : (
+              <>
+                Forgot your password? <Link to="/support">Message support</Link>.
+              </>
+            )}
           </p>
         </div>
       </div>
