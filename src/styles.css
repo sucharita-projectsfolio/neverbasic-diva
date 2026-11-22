@@ -743,17 +743,23 @@ ul, ol {
 
 .hero-art {
   position: relative;
+  min-width: 0;
 }
 
+/* The classic stack sizes itself from the column: the cards keep their 3:4
+   proportions and the rotations stay inside the frame on every screen. */
 .art-stack {
   position: relative;
-  height: 540px;
   width: 100%;
+  max-width: 560px;
+  margin-inline: auto;
+  aspect-ratio: 1 / 0.88;
+  height: auto;
 }
 
 .art-card {
   position: absolute;
-  width: 46%;
+  width: 42%;
   border: 7px solid #fff;
   border-radius: 6px;
   overflow: hidden;
@@ -769,22 +775,22 @@ ul, ol {
 }
 
 .art-card-1 {
-  left: 4%;
+  left: 9%;
   top: 3%;
   transform: rotate(-7deg);
   z-index: 2;
 }
 
 .art-card-2 {
-  right: 2%;
-  top: 16%;
+  right: 8%;
+  top: 15%;
   transform: rotate(6deg);
   z-index: 3;
 }
 
 .art-card-3 {
-  left: 24%;
-  bottom: 0;
+  left: 29%;
+  bottom: 2%;
   transform: rotate(-1.5deg);
   z-index: 4;
 }
@@ -3618,7 +3624,6 @@ code {
     order: -1;
   }
   .art-stack {
-    height: 420px;
     max-width: 520px;
     margin: 0 auto;
   }
@@ -3705,7 +3710,7 @@ code {
   .notes-grid { grid-template-columns: 1fr; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .hero-title { font-size: 44px; }
-  .art-stack { height: 330px; }
+  .art-stack { max-width: 360px; }
   .art-note { display: none; }
   .art-sticker { width: 96px; height: 96px; }
   .art-sticker strong { font-size: 24px; }
@@ -4255,6 +4260,9 @@ html[data-density="compact"] .section-head { margin-bottom: 26px; }
      book is in normal flow, so its wrapper has to size to the book. */
   height: auto;
   min-height: 0;
+  max-width: none;
+  margin-inline: 0;
+  aspect-ratio: auto;
 }
 
 .book3d-link {
