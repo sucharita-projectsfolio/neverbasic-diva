@@ -35,12 +35,14 @@ const originOf = (request, env) => {
 // catalogue does not change between two clicks.
 let cache = { at: 0, data: null };
 async function storeData(env) {
-  if (cache.data && Date.now() - cache.at < 60_000) return cache.data;
+  // Short enough that a new ebook or a renamed slug shows correct tags almost
+  // immediately, long enough to spare the database on a busy page view.
+  if (cache.data && Date.now() - cache.at < 10_000) return cache.data;
   const settings = await getSettings(env.DB);
   const ebooks =
     (
       await env.DB.prepare(
-        "SELECT title, slug, subtitle, description, price, mrp, category, pages, badge FROM ebooks WHERE status = 'active' ORDER BY sort ASC, created_at DESC"
+        "SELECT title, slug, subtitle, description, price, mrp, category, pages, badge, tags, ai_meta FROM ebooks WHERE status = 'active' ORDER BY sort ASC, created_at DESC"
       ).all()
     ).results || [];
   let posts = [];
@@ -163,13 +165,39 @@ function seoFor(path, data, origin, search) {
     const slug = decodeURIComponent(path.slice("/ebooks/".length).replace(/\/+$/, ""));
     const ebook = ebooks.find((book) => book.slug === slug);
     if (!ebook) return { ...base, title: `Ebook not found | ${brand}`, robots: "noindex, follow" };
-    const description = clip(ebook.description || ebook.subtitle || `${ebook.title} — an ebook by ${brand}.`);
+    // The Studio writes a search title, a search description and tags with the
+    // product page. Use them when they exist; fall back to the page copy.
+    let ai = {};
+    let tags = [];
+    try {
+      ai = JSON.parse(ebook.ai_meta || "{}") || {};
+    } catch {
+      ai = {};
+    }
+    try {
+      tags = JSON.parse(ebook.tags || "[]") || [];
+    } catch {
+      tags = [];
+    }
+    const description = clip(
+      ai.seoDescription || ebook.description || ebook.subtitle || `${ebook.title} — an ebook by ${brand}.`
+    );
+    const seoTitle = clip(ai.seoTitle || `${ebook.title} — ${ebook.category} ebook`, 60);
     return {
       ...base,
-      title: `${ebook.title} — ${ebook.category} ebook | ${brand}`,
+      title: seoTitle.includes(brand) ? seoTitle : `${seoTitle} | ${brand}`,
       description,
       image: ebook.cover || undefined,
-      keywords: `${ebook.title}, ${ebook.category} ebook, buy ${ebook.title.toLowerCase()}, ebook pdf download, ${brand}`,
+      keywords: Array.from(
+        new Set([
+          ...(Array.isArray(tags) ? tags : []),
+          ebook.title,
+          `${ebook.category} ebook`,
+          `buy ${ebook.title.toLowerCase()}`,
+          "ebook pdf download",
+          brand,
+        ])
+      ).join(", "),
       jsonLd: [
         home,
         {

@@ -4,6 +4,31 @@ import { Button, Field, Input, Spinner, StatusPill, useToast } from "../ui.jsx";
 
 const emptyForm = { name: "", email: "", password: "", phone: "" };
 
+// Firebase's browser SDK is loaded only when someone presses the Google button,
+// so a normal email sign-in downloads nothing extra. The URL import keeps the
+// bundle small and works with the CSP rules in worker/index.js.
+const loadModule = (url) => import(/* @vite-ignore */ url);
+let firebaseSdk = null;
+async function loadFirebaseSdk() {
+  if (firebaseSdk) return firebaseSdk;
+  const [app, auth] = await Promise.all([
+    loadModule("https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"),
+    loadModule("https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js"),
+  ]);
+  firebaseSdk = { app, auth };
+  return firebaseSdk;
+}
+
+function googleError(error) {
+  const code = String((error && error.code) || "");
+  if (code === "auth/popup-blocked") return "Your browser blocked the Google window. Allow pop-ups for this site and try again.";
+  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return "Google sign-in was closed before it finished. Try again when you are ready.";
+  if (code === "auth/unauthorized-domain") return "This website is not on the Firebase authorised domains list yet. Add it in Firebase → Authentication → Settings → Authorised domains.";
+  if (code === "auth/operation-not-allowed") return "Google sign-in is switched off in Firebase. Open Firebase → Authentication → Sign-in method and enable Google.";
+  if (code === "auth/account-exists-with-different-credential") return "An account already uses this email with another sign-in method. Sign in with your password instead.";
+  return String((error && error.message) || "Google sign-in did not finish. Try again.");
+}
+
 // Firebase returns terse codes; buyers need a sentence they can act on.
 function firebaseError(code) {
   const map = {
@@ -123,6 +148,35 @@ export default function AccountPage() {
     }
   }
 
+  async function googleSignIn() {
+    setError("");
+    setBusy(true);
+    try {
+      const { firebaseKey, firebaseAuthDomain, firebaseProjectId } = session || {};
+      if (!firebaseKey) throw new Error("Google sign-in needs the Firebase Web API key in Admin → Site content.");
+      if (!firebaseAuthDomain) {
+        throw new Error("Add the Firebase project id in Admin → Site content to switch on Google sign-in.");
+      }
+      const { app, auth } = await loadFirebaseSdk();
+      const instance = app.getApps().length
+        ? app.getApp()
+        : app.initializeApp({ apiKey: firebaseKey, authDomain: firebaseAuthDomain, projectId: firebaseProjectId });
+      const provider = new auth.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      const credential = await auth.signInWithPopup(auth.getAuth(instance), provider);
+      const idToken = await credential.user.getIdToken();
+      const result = await api("/api/account/firebase", { method: "POST", body: { idToken } });
+      setSession({ ...(session || {}), customer: result.customer });
+      toast(`Signed in as ${result.customer.name || result.customer.email}`);
+      setForm(emptyForm);
+      await loadData();
+    } catch (err) {
+      setError(googleError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveProfile(event) {
     event.preventDefault();
     try {
@@ -237,6 +291,26 @@ export default function AccountPage() {
               >
                 Continue with Firebase
               </Button>
+            ) : null}
+            {session.firebaseKey && mode !== "reset" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="btn-block google-btn"
+                loading={busy}
+                onClick={googleSignIn}
+                disabled={!session.firebaseAuthDomain}
+              >
+                <span className="google-mark" aria-hidden="true">
+                  G
+                </span>
+                Continue with Google
+              </Button>
+            ) : null}
+            {session.firebaseKey && !session.firebaseAuthDomain ? (
+              <p className="field-hint">
+                Google sign-in is ready once the Firebase project id is saved in Admin → Site content → Accounts.
+              </p>
             ) : null}
           </form>
           <p className="field-hint">

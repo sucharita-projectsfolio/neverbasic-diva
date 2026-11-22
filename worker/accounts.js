@@ -178,6 +178,30 @@ async function findCustomerByEmail(db, email) {
 
 /* ------------------------------- Firebase -------------------------------- */
 
+// The Firebase project id is needed by the browser SDK. Admin normally saves it;
+// when it is blank we ask Firebase for it with the public web API key (the same
+// call the Firebase SDK makes), and remember the answer for this isolate.
+let projectLookup = { key: "", projectId: "" };
+async function firebaseProjectId(settings, env) {
+  const configured = String(settings.firebase_project_id || env.FIREBASE_PROJECT_ID || "").trim();
+  if (configured) return configured;
+  const key = String(settings.firebase_api_key || env.FIREBASE_API_KEY || "").trim();
+  if (!key) return "";
+  if (projectLookup.key === key) return projectLookup.projectId;
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${encodeURIComponent(key)}`
+    );
+    const data = await response.json().catch(() => ({}));
+    const projectId = String(data.projectId || "").trim();
+    projectLookup = { key, projectId };
+    return projectId;
+  } catch {
+    projectLookup = { key, projectId: "" };
+    return "";
+  }
+}
+
 async function firebaseIdentity(settings, env, idToken) {
   const key = String(settings.firebase_api_key || env.FIREBASE_API_KEY || "").trim();
   if (!key) return { error: "Firebase sign-in is not configured yet." };
@@ -213,12 +237,15 @@ export async function accountRoute(request, env, url) {
   if (path === "/session" && method === "GET") {
     const customer = await customerFromRequest(env, request);
     const firebaseKey = String(settings.firebase_api_key || env.FIREBASE_API_KEY || "").trim();
+    const projectId = firebaseKey ? await firebaseProjectId(settings, env) : "";
     return U.json({
       ok: true,
       accounts: settings.customer_accounts !== "0",
       firebase: Boolean(firebaseKey),
       // A Firebase web API key is public by design (it ships in every web app).
       firebaseKey: firebaseKey || "",
+      firebaseProjectId: projectId,
+      firebaseAuthDomain: projectId ? `${projectId}.firebaseapp.com` : "",
       customer: safeCustomer(customer),
     });
   }

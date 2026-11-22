@@ -197,6 +197,15 @@ function Footer() {
           <Link to="/refund">{content.footer_link_refund}</Link>
           <Link to="/policies">{content.footer_link_policies}</Link>
           <a href={`mailto:${settings.support_email || ""}`}>{content.footer_link_email}</a>
+          {settings.telegram ? (
+            <a
+              href={`https://t.me/${String(settings.telegram).replace(/^@/, "")}?text=${encodeURIComponent("Hi Neverbasic Diva, I need help with my order.")}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Telegram support
+            </a>
+          ) : null}
         </div>
         <div className="footer-col">
           <h5>{content.footer_payments}</h5>

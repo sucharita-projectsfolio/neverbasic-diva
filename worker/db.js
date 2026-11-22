@@ -251,7 +251,9 @@ export const DEFAULT_SETTINGS = {
   brand_name: "Neverbasic Diva",
   brand_tagline: "The knowledge nobody hands you for free.",
   instagram: "neverbasic_diva",
-  support_email: "hello@neverbasicdiva.com",
+  support_email: "connectgridx@gmail.com",
+  telegram: "Nadia_valentina9",
+  telegram_note: "Fastest replies. Open the chat and your message is already written — just hit send.",
   whatsapp: "",
   announcement: "Instant PDF delivery after payment · Resell rights open for a limited time · 100% refund if it doesn't land",
   hero_eyebrow: "micro-ebooks for women who refuse to stay basic",
@@ -388,6 +390,12 @@ export const MIGRATION_ALTERS = [
   "CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id)",
   // The old copy told buyers to paste a UTR. Gateway payments never need that.
   "UPDATE settings SET value = 'Pay the exact amount shown on this page. Your download unlocks the second the gateway confirms the payment — no screenshots, no UTR numbers.' WHERE key = 'pay_instructions' AND value LIKE 'Scan the UPI QR%'",
+  // The store's real support channels. An install that still carries the old
+  // placeholder address (or nothing) gets the live one; a deliberately changed
+  // address is left alone.
+  "UPDATE settings SET value = 'connectgridx@gmail.com' WHERE key = 'support_email' AND (value = '' OR value = 'hello@neverbasicdiva.com')",
+  "INSERT INTO settings (key, value) SELECT 'telegram', 'Nadia_valentina9' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'telegram')",
+  "INSERT INTO settings (key, value) SELECT 'telegram_note', 'Fastest replies. Open the chat and your message is already written — just hit send.' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'telegram_note')",
 ];
 
 const SEED_EBOOKS = [

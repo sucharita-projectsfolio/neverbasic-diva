@@ -12,6 +12,7 @@ import {
   generateStore,
   rewriteBlock,
   assistantReply,
+  fallbackReply,
   testAi,
   pdfToText,
 } from "./ai.js";
@@ -217,7 +218,9 @@ export async function siteExtras(env, settings) {
         }
       : null,
     aiReady: settings.ai_enabled !== "0",
-    aiAvailable: settings.ai_enabled !== "0" && readAiConfig(settings, env).providers.some((provider) => provider.apiKey),
+    // The assistant always answers: the model when a key works, the built-in
+    // quick answers otherwise.
+    aiAvailable: settings.ai_enabled !== "0",
   };
 }
 
@@ -355,13 +358,11 @@ export async function publicRoute(request, env, url) {
       // The attempts carry the real reason (bad key, retired model, empty free
       // quota), so keep them in the log instead of just "busy".
       console.error("assistant_failed", error && error.message, JSON.stringify((error && error.attempts) || []));
-      const noProvider = /no ai provider key/i.test(String(error && error.message));
-      return U.bad(
-        noProvider
-          ? "The assistant needs an AI key before it can answer. Add a Groq key in Admin → AI studio, then press Test."
-          : "The assistant is busy right now. Try again in a minute, or use the support form.",
-        503
-      );
+      const last = [...messages].reverse().find((message) => message.role !== "assistant");
+      return U.json({
+        reply: fallbackReply({ question: last ? last.content : "", settings, catalog: ebooks.results || [] }),
+        meta: { provider: "Quick answers", model: "built-in", fallback: true },
+      });
     }
   }
 

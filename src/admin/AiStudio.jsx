@@ -78,7 +78,14 @@ export default function AiStudio({ data, reload }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
-  const [target, setTarget] = useState({ ebookId: data.ebooks[0]?.id || "", notes: "", fileKey: "", fileName: "", title: "" });
+  const [target, setTarget] = useState({
+    ebookId: data.ebooks[0]?.id || "",
+    notes: "",
+    text: "",
+    fileKey: "",
+    fileName: "",
+    title: "",
+  });
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
   const [meta, setMeta] = useState(null);
@@ -87,6 +94,7 @@ export default function AiStudio({ data, reload }) {
   const [storePrompt, setStorePrompt] = useState("");
   const [storeBusy, setStoreBusy] = useState(false);
   const [storePlan, setStorePlan] = useState(null);
+  const [liveSlug, setLiveSlug] = useState("");
 
   const ebook = data.ebooks.find((row) => row.id === target.ebookId) || null;
 
@@ -169,8 +177,8 @@ export default function AiStudio({ data, reload }) {
   }
 
   async function analyze() {
-    if (!target.ebookId && !target.fileKey && !target.notes) {
-      toast("Pick an ebook, upload a PDF, or write a title + notes.", "bad");
+    if (!target.ebookId && !target.fileKey && !target.notes && !target.text.trim()) {
+      toast("Pick an ebook, upload a PDF, paste the text, or write a title + notes.", "bad");
       return;
     }
     setAnalyzing(true);
@@ -183,11 +191,16 @@ export default function AiStudio({ data, reload }) {
           fileKey: target.fileKey || "",
           title: target.title || ebook?.title || "",
           notes: target.notes || "",
+          // Pasted chapters win over the PDF: text-based and scanned PDFs both
+          // work this way, and nothing has to be re-uploaded.
+          text: target.text || "",
         },
       });
       setResult(response.result);
       setMeta({ ...response.result._meta, ...response });
-      toast(`Written by ${response.result._meta.provider} · ${response.result.extractedChars} characters read`);
+      toast(
+        `Written by ${response.result._meta.provider} · ${response.extractedChars || target.text.length} characters read`
+      );
       if (target.ebookId) await reload();
     } catch (error) {
       toast(error.message, "bad");
@@ -223,6 +236,8 @@ export default function AiStudio({ data, reload }) {
     try {
       const body = {
         id: target.ebookId || "",
+        // Sending the current slug keeps the product URL exactly as it is.
+        slug: ebook?.slug || "",
         title: result.title,
         subtitle: result.subtitle,
         description: result.description,
@@ -243,8 +258,15 @@ export default function AiStudio({ data, reload }) {
         sort: ebook?.sort || 0,
       };
       const saved = await api("/api/admin/ebooks", { method: "POST", body });
-      toast(target.ebookId ? "Ebook updated with the new copy" : "Ebook created");
+      toast(target.ebookId ? "Ebook updated — open the product page to see it" : "Ebook created — open the product page to see it");
       setTarget((current) => ({ ...current, ebookId: saved.id, fileKey: "", fileName: "" }));
+      setLiveSlug(
+        ebook?.slug ||
+          String(result.title || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+      );
       await reload();
     } catch (error) {
       toast(error.message, "bad");
@@ -414,11 +436,22 @@ export default function AiStudio({ data, reload }) {
           </Field>
         </div>
         {target.fileKey ? <p className="field-hint">✓ {target.fileName || "PDF ready"}</p> : null}
-        <Field label="Author notes (optional)" hint="The angle, the reader, the promise, anything the PDF does not say.">
+        <Field
+          label="Or paste the ebook text"
+          hint="Open your PDF or doc, copy the chapters and paste them here. This works even when the PDF is scanned or the file will not read."
+        >
+          <Textarea
+            rows={6}
+            value={target.text}
+            onChange={(event) => setTarget({ ...target, text: event.target.value })}
+            placeholder="Paste the ebook here — a chapter, the whole thing, or the key pages. Plain text is fine."
+          />
+        </Field>
+        <Field label="Author notes (optional)" hint="The angle, the reader, the promise, anything the text does not say.">
           <Textarea rows={3} value={target.notes} onChange={(event) => setTarget({ ...target, notes: event.target.value })} placeholder="This is for women in their 20s who underspend on themselves but overspend on everyone else…" />
         </Field>
         <Button onClick={analyze} loading={analyzing}>
-          {analyzing ? "Reading & writing…" : "Analyse with AI"}
+          {analyzing ? "Reading & writing…" : "Generate the whole product page"}
         </Button>
         {meta?.attempts?.length ? (
           <details className="admin-details">
@@ -439,11 +472,22 @@ export default function AiStudio({ data, reload }) {
           title="Generated product page"
           hint="Edit anything. Regenerate one block without losing the rest. Apply writes it to the ebook."
           actions={
-            <Button size="sm" onClick={apply} loading={applying}>
-              {target.ebookId ? "Apply to ebook" : "Create ebook"}
-            </Button>
+            <>
+              <Button size="sm" variant="secondary" onClick={analyze} loading={analyzing}>
+                ↻ Rewrite everything
+              </Button>
+              <Button size="sm" onClick={apply} loading={applying}>
+                {target.ebookId ? "Apply to ebook" : "Create ebook"}
+              </Button>
+            </>
           }
         >
+          {result._meta?.fallback ? (
+            <p className="field-hint">
+              Written by the built-in writer because no AI provider answered ({result._meta.reason || "no key or quota"}).
+              It uses your ebook text and notes, so it is safe to publish. Add a Gemini or Groq key above for richer copy.
+            </p>
+          ) : null}
           <div className="ai-generated-grid">
             <div className="ai-field">
               <label>Title</label>
@@ -455,14 +499,14 @@ export default function AiStudio({ data, reload }) {
             <div className="ai-field">
               <label>Subtitle</label>
               <Input value={result.subtitle || ""} onChange={(event) => patch({ subtitle: event.target.value })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("subtitle")}>
-                ↻ Regenerate
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("subtitle")} disabled={sectionBusy === "subtitle"}>
+                {sectionBusy === "subtitle" ? "Regenerating…" : "↻ Regenerate"}
               </button>
             </div>
             <div className="ai-field full">
               <label>Description</label>
               <Textarea rows={8} value={result.description || ""} onChange={(event) => patch({ description: event.target.value })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("description")}>
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("description")} disabled={sectionBusy === "description"}>
                 {sectionBusy === "description" ? "Regenerating…" : "↻ Regenerate"}
               </button>
             </div>
@@ -473,57 +517,67 @@ export default function AiStudio({ data, reload }) {
                 value={(result.highlights || []).join("\n")}
                 onChange={(event) => patch({ highlights: event.target.value.split("\n").filter((line) => line.trim()) })}
               />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("highlights")}>
-                ↻ Regenerate
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("highlights")} disabled={sectionBusy === "highlights"}>
+                {sectionBusy === "highlights" ? "Regenerating…" : "↻ Regenerate"}
               </button>
             </div>
             <div className="ai-field full">
               <label>Free sample</label>
               <Textarea rows={7} value={result.sample || ""} onChange={(event) => patch({ sample: event.target.value })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("sample")}>
-                ↻ Regenerate
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("sample")} disabled={sectionBusy === "sample"}>
+                {sectionBusy === "sample" ? "Regenerating…" : "↻ Regenerate"}
               </button>
             </div>
             <div className="ai-field">
               <label>Price</label>
               <Input type="number" value={result.price ?? 0} onChange={(event) => patch({ price: Number(event.target.value) || 0 })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("pricing")}>
-                ↻ Regenerate
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("pricing")} disabled={sectionBusy === "pricing"}>
+                {sectionBusy === "pricing" ? "Regenerating…" : "↻ Regenerate"}
               </button>
             </div>
             <div className="ai-field">
               <label>MRP anchor</label>
               <Input type="number" value={result.mrp ?? 0} onChange={(event) => patch({ mrp: Number(event.target.value) || 0 })} />
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("pricing")} disabled={sectionBusy === "pricing"}>
+                {sectionBusy === "pricing" ? "Regenerating…" : "↻ Regenerate"}
+              </button>
             </div>
             <div className="ai-field">
               <label>Badge</label>
               <Input value={result.badge || ""} onChange={(event) => patch({ badge: event.target.value })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("badge")}>
-                ↻
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("badge")} disabled={sectionBusy === "badge"}>
+                {sectionBusy === "badge" ? "…" : "↻"}
               </button>
             </div>
             <div className="ai-field">
               <label>Category</label>
               <Input value={result.category || ""} onChange={(event) => patch({ category: event.target.value })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("category")}>
-                ↻
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("category")} disabled={sectionBusy === "category"}>
+                {sectionBusy === "category" ? "…" : "↻"}
               </button>
             </div>
             <div className="ai-field">
               <label>Pages (estimate)</label>
               <Input type="number" value={result.pages ?? 0} onChange={(event) => patch({ pages: Number(event.target.value) || 0 })} />
+              <p className="field-hint">Counted from the PDF when possible — edit it if your file says otherwise.</p>
             </div>
             <div className="ai-field">
               <label>Tags</label>
               <Input value={(result.tags || []).join(", ")} onChange={(event) => patch({ tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} />
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("tags")}>
-                ↻
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("tags")} disabled={sectionBusy === "tags"}>
+                {sectionBusy === "tags" ? "…" : "↻"}
               </button>
             </div>
             <div className="ai-field full">
               <label>SEO title & description</label>
               <Input value={result.seoTitle || ""} onChange={(event) => patch({ seoTitle: event.target.value })} />
               <Textarea rows={2} value={result.seoDescription || ""} onChange={(event) => patch({ seoDescription: event.target.value })} />
+              <p className="field-hint">
+                This is what shows in Google. Keep the title under 58 characters and the description under 152.
+              </p>
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("seo")} disabled={sectionBusy === "seo"}>
+                {sectionBusy === "seo" ? "Regenerating…" : "↻ Regenerate SEO"}
+              </button>
             </div>
             <div className="ai-field full">
               <label>Psychological triggers used</label>
@@ -532,8 +586,9 @@ export default function AiStudio({ data, reload }) {
                 <br />
                 <strong>Audience:</strong> {result.audience || "—"}
               </p>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("triggers")}>
-                ↻ Regenerate insight
+              <p className="field-hint">These are the private nerves the copy presses — not claims shown on the page.</p>
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("triggers")} disabled={sectionBusy === "triggers"}>
+                {sectionBusy === "triggers" ? "Regenerating…" : "↻ Regenerate insight"}
               </button>
             </div>
             <div className="ai-field full">
@@ -546,20 +601,28 @@ export default function AiStudio({ data, reload }) {
                   </li>
                 ))}
               </ul>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("faq")}>
-                ↻ Regenerate FAQ
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("faq")} disabled={sectionBusy === "faq"}>
+                {sectionBusy === "faq" ? "Regenerating…" : "↻ Regenerate FAQ"}
               </button>
             </div>
             <div className="ai-field full">
               <label>Launch email</label>
               <Input value={result.emailSubject || ""} onChange={(event) => patch({ emailSubject: event.target.value })} />
               <Textarea rows={4} value={result.emailBody || ""} onChange={(event) => patch({ emailBody: event.target.value })} />
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("email")} disabled={sectionBusy === "email"}>
+                {sectionBusy === "email" ? "Regenerating…" : "↻ Regenerate email"}
+              </button>
             </div>
           </div>
           <div className="ai-actions">
             <Button variant="ghost" onClick={() => setResult(null)}>
               Discard
             </Button>
+            {liveSlug ? (
+              <a className="btn btn-secondary" href={`/ebooks/${liveSlug}`} target="_blank" rel="noreferrer">
+                View product page ↗
+              </a>
+            ) : null}
             <Button onClick={apply} loading={applying}>
               {target.ebookId ? "Apply to ebook" : "Create ebook"}
             </Button>

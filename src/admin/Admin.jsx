@@ -1432,14 +1432,14 @@ function Payments({ settings, reload }) {
           hint="Orders placed with the same email attach to the account automatically."
         />
         <div className="two-col">
-          <Field label="Firebase Web API key (optional)" hint="Firebase console → Project settings → Your apps → Web API key. Adds Firebase email/password sign-in.">
+          <Field label="Firebase Web API key (optional)" hint="Firebase console → Project settings → Your apps → Web API key. Adds email/password and Google sign-in.">
             <Input
               value={draft.firebase_api_key}
               onChange={(event) => setDraft({ ...draft, firebase_api_key: event.target.value })}
               placeholder="AIza…"
             />
           </Field>
-          <Field label="Firebase project id (optional)">
+          <Field label="Firebase project id" hint="Needed for Google sign-in. Firebase console → Project settings → General → Project ID.">
             <Input
               value={draft.firebase_project_id}
               onChange={(event) => setDraft({ ...draft, firebase_project_id: event.target.value })}
@@ -1998,6 +1998,8 @@ function Content({ settings, reload }) {
     "brand_tagline",
     "instagram",
     "support_email",
+    "telegram",
+    "telegram_note",
     "whatsapp",
     "announcement",
     "hero_eyebrow",
@@ -2056,6 +2058,22 @@ function Content({ settings, reload }) {
           </Field>
           <Field label="WhatsApp (optional)">
             <Input value={draft.whatsapp} onChange={(event) => setDraft({ ...draft, whatsapp: event.target.value })} />
+          </Field>
+        </div>
+        <div className="two-col">
+          <Field label="Telegram handle" hint="Without the @. Buyers get a chat with the message already written.">
+            <Input
+              value={draft.telegram || ""}
+              onChange={(event) => setDraft({ ...draft, telegram: event.target.value })}
+              placeholder="Nadia_valentina9"
+            />
+          </Field>
+          <Field label="Telegram note" hint="Shown under the Telegram button on support and policy pages.">
+            <Input
+              value={draft.telegram_note || ""}
+              onChange={(event) => setDraft({ ...draft, telegram_note: event.target.value })}
+              placeholder="Fastest replies. Tell us your order reference."
+            />
           </Field>
         </div>
         <Field label="Announcement strip" hint="Runs across the top of every page. Leave blank to hide.">

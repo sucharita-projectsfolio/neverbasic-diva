@@ -47,6 +47,16 @@
   status = 200
 
 [[redirects]]
+  from = "/account"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/account/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
   from = "/track"
   to = "/index.html"
   status = 200

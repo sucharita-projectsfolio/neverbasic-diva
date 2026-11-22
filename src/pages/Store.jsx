@@ -142,7 +142,15 @@ export function EbookPage({ slug }) {
               <span className="price-compare">≈ one cup of chai</span>
             </Reveal>
             <Reveal delay={120}>
-              <p className="detail-desc">{ebook.description}</p>
+              <div className="detail-desc">
+                {String(ebook.description || "")
+                  .split(/\n{2,}/)
+                  .map((paragraph) => paragraph.trim())
+                  .filter(Boolean)
+                  .map((paragraph, index) => (
+                    <p key={index}>{paragraph}</p>
+                  ))}
+              </div>
             </Reveal>
             {ebook.highlights?.length ? (
               <Reveal delay={160} className="detail-inside">
@@ -645,8 +653,8 @@ export function OrderPage({ reference }) {
     <div className="page wrap narrow order-page">
       {payFlag === "success" ? (
         <div className="pay-banner success">
-          <strong>Payment received.</strong> Your access is unlocked below. A copy of the download link
-          stays on this page.
+          <strong>Payment received.</strong> Your PDF is unlocking now and the download starts automatically.
+          This page keeps the link, so you can download it again any time.
         </div>
       ) : null}
       {payFlag === "failed" ? (
@@ -679,8 +687,10 @@ export function OrderPage({ reference }) {
           <h3>Access</h3>
           {paid ? (
             <>
+              <AutoDownload url={order.items?.[0]?.downloadUrl || order.downloadUrl} orderRef={order.ref} />
               <p className="muted">
-                Yours forever. Re-download any time from this page — the link stays live.
+                Yours forever. The download starts on its own — if your browser blocks it, use the button below.
+                Re-download any time from this page; the link stays live.
               </p>
               {order.items?.length ? (
                 <div className="download-list">
@@ -725,6 +735,18 @@ export function OrderPage({ reference }) {
             <Link to="/support" className="btn btn-ghost btn-sm">
               Need help?
             </Link>
+            {site.settings.telegram ? (
+              <a
+                className="btn btn-ghost btn-sm"
+                href={`https://t.me/${String(site.settings.telegram).replace(/^@/, "")}?text=${encodeURIComponent(
+                  `Hi Neverbasic Diva, I need help with order ${order.ref}.`
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Telegram support
+              </a>
+            ) : null}
             {paid ? (
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowRefund(true)}>
                 Refund / not satisfied
@@ -938,6 +960,27 @@ export function OrderPage({ reference }) {
       </Modal>
     </div>
   );
+}
+
+// The PDF starts downloading by itself the moment a verified payment lands on
+// the order page. Browsers can block the first automatic file, so the page keeps
+// the visible button right beside it. One attempt per order per browser session.
+function AutoDownload({ url, orderRef }) {
+  useEffect(() => {
+    if (!url) return undefined;
+    const key = `nbd:autodownload:${orderRef}`;
+    try {
+      if (window.sessionStorage.getItem(key)) return undefined;
+      window.sessionStorage.setItem(key, "1");
+    } catch {
+      /* private mode */
+    }
+    const timer = window.setTimeout(() => {
+      window.location.href = url;
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [url, orderRef]);
+  return null;
 }
 
 export function TrackPage() {

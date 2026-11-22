@@ -1774,6 +1774,9 @@ ul, ol {
   color: rgba(36, 30, 27, 0.8);
   margin: 24px 0;
 }
+.detail-desc p + p {
+  margin-top: 0.85em;
+}
 
 .detail-inside h3,
 .detail-after h3 {
@@ -5036,4 +5039,26 @@ html { scroll-behavior: smooth; }
   background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #fff));
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
   pointer-events: none;
+}
+
+/* Google sign-in button — brand mark stays monochrome, Google's blue only in the G. */
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+.google-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  color: #4285f4;
+  font: 700 11px/1 var(--font-body);
+  border: 1px solid var(--line);
+}
+.google-btn:disabled {
+  opacity: 0.5;
 }

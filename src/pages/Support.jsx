@@ -23,6 +23,10 @@ export function SupportPage() {
   const { site } = useSite();
   const toast = useToast();
   const settings = site.settings;
+  const telegram = String(settings.telegram || "").replace(/^@/, "");
+  const telegramUrl = telegram
+    ? `https://t.me/${telegram}?text=${encodeURIComponent("Hi Neverbasic Diva, I am a customer and I need help with my order.")}`
+    : "";
   const [mode, setMode] = useState("new");
   const [form, setForm] = useState({ name: "", email: "", orderRef: "", subject: "Help with my order", message: "" });
   const [created, setCreated] = useState("");
@@ -192,7 +196,14 @@ export function SupportPage() {
                 </Button>
                 <p className="field-hint">
                   Prefer email? {settings.support_email} · Instagram @{settings.instagram}
+                  {telegram ? ` · Telegram @${telegram}` : ""}
                 </p>
+                {telegramUrl ? (
+                  <a className="btn btn-secondary" href={telegramUrl} target="_blank" rel="noreferrer">
+                    Chat on Telegram →
+                  </a>
+                ) : null}
+                {telegram ? <p className="field-hint">{settings.telegram_note || "Fastest replies, usually within the hour."}</p> : null}
               </form>
             )
           ) : ticket ? (
@@ -514,8 +525,21 @@ export function PoliciesPage() {
         <section>
           <h2>Contact</h2>
           <p>
-            Email {s.support_email} · Instagram @{s.instagram}. For anything urgent about a payment, use the{" "}
-            <Link to="/support">support form</Link> with your order reference.
+            Email <a href={`mailto:${s.support_email}`}>{s.support_email}</a> · Instagram @{s.instagram}
+            {s.telegram ? (
+              <>
+                {" · "}
+                <a
+                  href={`https://t.me/${String(s.telegram).replace(/^@/, "")}?text=${encodeURIComponent("Hi Neverbasic Diva, I need help with my order.")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Telegram @{String(s.telegram).replace(/^@/, "")}
+                </a>
+              </>
+            ) : null}
+            . For anything urgent about a payment, use the <Link to="/support">support form</Link> with your order
+            reference.
           </p>
         </section>
       </div>

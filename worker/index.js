@@ -41,7 +41,7 @@ import {
 
 const ADMIN_COOKIE = "nbd_admin";
 const PUBLIC_KEYS = [
-  "brand_name", "brand_tagline", "instagram", "support_email", "whatsapp", "announcement",
+  "brand_name", "brand_tagline", "instagram", "support_email", "telegram", "telegram_note", "whatsapp", "announcement",
   "hero_eyebrow", "hero_title", "hero_sub", "hero_note", "accent_color", "ink_color", "bg_color",
   "payment_link", "upi_id", "pay_instructions", "resell_price", "resell_enabled",
   "resell_commission_note", "refund_window_days", "refund_policy", "terms", "license_terms",
@@ -86,12 +86,12 @@ export default {
 
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com",
+  "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.gstatic.com https://apis.google.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com",
-  "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://checkout.stripe.com",
+  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://firebaseinstallations.googleapis.com",
+  "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://checkout.stripe.com https://*.firebaseapp.com https://accounts.google.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self' https://secure.payu.in https://test.payu.in https://checkout.stripe.com https://www.paypal.com https://www.sandbox.paypal.com",
@@ -269,6 +269,8 @@ function publicEbook(row) {
       faq: Array.isArray(ai.faq) ? ai.faq.slice(0, 6) : [],
       audience: typeof ai.audience === "string" ? ai.audience.slice(0, 700) : "",
       painPoints: Array.isArray(ai.painPoints) ? ai.painPoints.slice(0, 6) : [],
+      seoTitle: typeof ai.seoTitle === "string" ? ai.seoTitle.slice(0, 120) : "",
+      seoDescription: typeof ai.seoDescription === "string" ? ai.seoDescription.slice(0, 300) : "",
     },
   };
 }
@@ -1261,7 +1263,15 @@ async function handleAdmin(request, env, url, admin) {
     if (id) {
       const existing = await db.prepare("SELECT * FROM ebooks WHERE id = ?").bind(id).first();
       if (!existing) return U.bad("Ebook not found", 404);
-      const slug = U.slugify(body.slug || common.title) + (existing.slug && U.slugify(body.slug || common.title) !== existing.slug ? "" : "");
+      // Keep the live URL stable unless the owner typed a new one. Re-saving copy
+      // from the AI studio must never break an existing product link.
+      const rawSlug = String(body.slug || "").trim();
+      const requestedSlug = rawSlug ? U.slugify(rawSlug) : "";
+      let slug = requestedSlug || existing.slug || U.slugify(common.title);
+      if (requestedSlug && requestedSlug !== existing.slug) {
+        const clash = await db.prepare("SELECT 1 AS x FROM ebooks WHERE slug = ? AND id != ?").bind(requestedSlug, id).first();
+        if (clash) slug = `${requestedSlug}-${U.hex(2)}`;
+      }
       await db
         .prepare(
           `UPDATE ebooks SET slug=?, title=?, subtitle=?, description=?, highlights=?, category=?, pages=?, price=?, mrp=?, cover=?, file_key=?, file_name=?, file_size=?, sample=?, tags=?, ai_meta=?, status=?, featured=?, badge=?, sort=? WHERE id=?`

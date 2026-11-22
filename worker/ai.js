@@ -432,13 +432,16 @@ export function parseJsonLoose(text) {
 const systemPrompt = (tone) =>
   [
     "You are the copy chief for an independent micro-ebook store called Neverbasic Diva.",
-    "You are a world-class direct-response copywriter and behavioural psychologist.",
     "You write like a sharp, warm friend who tells the truth — specific, human, confident, never cringe.",
     "Rules you never break:",
     "- No fake testimonials, fake credentials, fake scarcity numbers, income claims or guarantees.",
     "- No emoji spam. At most one subtle emoji in a whole piece, usually none.",
-    "- Plain language. Short sentences. Concrete detail over adjectives.",
+    "- Write at a grade 7 reading level: everyday words, short sentences, one idea per line.",
+    "- Never use these words or anything like them: leverage, unlock, journey, transform, game-changer, dive deep, delve, robust, holistic, synergy, empower, manifest, curated, elevate, unleash, tapestry, realm, navigate the landscape, testament, revolutionise, seamless, cutting-edge, in today's fast-paced world.",
+    "- No AI voice: no rule-of-three in every sentence, no em-dash pile-ups, no 'it's not just X, it's Y', no rhetorical questions stacked on each other.",
     "- Describe what the reader will be able to do, not how amazing the book is.",
+    "- Psychology must stay invisible: write the line a person actually feels. Never name a technique inside the copy.",
+    "- SEO without keywords stuffing: use the phrases a real person would type into Google, once or twice, in natural sentences.",
     tone ? `- Brand tone for this store: ${tone}` : "",
     "Return only the requested JSON. No markdown fences, no commentary, no preamble.",
   ]
@@ -446,7 +449,7 @@ const systemPrompt = (tone) =>
     .join("\n");
 
 const ANALYSIS_SHAPE = `{
-  "title": "under 60 characters, magnetic, specific",
+  "title": "under 60 characters, magnetic, specific, the words a buyer would search",
   "subtitle": "one line promise, under 110 characters",
   "hook": "one sentence that stops the scroll",
   "category": "Money | Mindset | Power | Relationships | Digital | Wellness",
@@ -454,15 +457,15 @@ const ANALYSIS_SHAPE = `{
   "pages": 34,
   "price": 99,
   "mrp": 499,
-  "description": "150-260 words, 3-4 short paragraphs separated by \\n\\n. Opens with the reader's exact private frustration, names the cost of staying stuck, then promises the shift without hype. Weaves in real behavioural levers (loss aversion, identity, social proof of effort, specificity, future pacing) invisibly — never mention psychology jargon.",
+  "description": "150-230 words, 3-4 short paragraphs separated by \\n\\n. Paragraph 1: the reader's private frustration in their own words. Paragraph 2: what is actually inside, concrete. Paragraph 3: what changes for them, then a quiet close. Plain everyday words. The pull comes from being seen, not from adjectives.",
   "highlights": ["6 outcome-led bullets, each under 90 characters, starting with a verb or a number"],
   "painPoints": ["4 things the reader secretly thinks, in their own words"],
   "triggers": ["5 psychological hooks used, named simply e.g. 'cost of waiting'"],
   "audience": "2 sentences: exactly who this is for and who it is not for",
   "faq": [{"q": "question", "a": "honest 1-2 sentence answer"}],
   "sample": "220-320 words of the actual opening of the ebook, in the author's voice, ending on a line that makes buying feel obvious",
-  "seoTitle": "under 60 characters",
-  "seoDescription": "under 155 characters",
+  "seoTitle": "under 58 characters, includes the main search phrase and the words ebook/pdf",
+  "seoDescription": "under 152 characters, the promise plus 'instant PDF download', reads like a search result not an ad",
   "emailSubject": "under 55 characters",
   "emailBody": "80-120 words launch email, one link placeholder {link}",
   "tags": ["8 short search tags"]
@@ -498,6 +501,229 @@ function normaliseAnalysis(raw, fallback = {}) {
     emailBody: asString(raw?.emailBody, 2000),
     tags: asList(raw?.tags, 12, 40),
   };
+}
+
+/* --------------------------- built-in copywriter -------------------------- */
+// A missing key, an exhausted free quota or a provider outage must never leave
+// the owner with an empty product page. This writer works only from the ebook's
+// own text (or the title and notes), uses everyday words and fills every field
+// the product page needs.
+
+const PLAIN_STOPWORDS = new Set(
+  "the a an and or but if then than that this these those for with from into over under about after before again against because been being between both did does doing down during each few further had has have having here how its itself just more most other our out own same she should some such their them there they too until very was were what when where which while who whom why will your yours you i we it is are was be to of in on at by as not no so do can could would may might must im ive id ill thats youre dont didnt cant wont isnt arent chapter chapters book books page pages part parts three two four five first second third keep keeps kept without amount amounts taught wait waiting look looks make makes made move moves take takes want wants need needs spend spends know knows think thinks say says said stop stops start starts work works feel feels get gets ask asks pay pays paid before after every same day days month months year years small big most people thing things".split(
+    " "
+  )
+);
+
+const clipText = (value, max = 600) => String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+
+function sentencesFrom(text, limit = 24) {
+  const raw = String(text || "").replace(/\r/g, "\n");
+  const found = raw.match(/[^.!?\n]{30,240}[.!?]/g) || [];
+  return found
+    .map((line) => clipText(line, 260))
+    .filter((line) => /[a-z]{3}/i.test(line) && !/^[A-Z0-9 ,.\-–—|/]{4,}$/.test(line))
+    .slice(0, limit);
+}
+
+function headingsFrom(text, limit = 8) {
+  return String(text || "")
+    .split(/\n+/)
+    .map((line) => clipText(line, 110))
+    .filter((line) => line.length >= 12 && line.length <= 95 && line.split(" ").length <= 12 && !/[{}<>]/.test(line))
+    .slice(0, limit);
+}
+
+function keywordsFrom(text, limit = 10) {
+  const counts = new Map();
+  for (const word of String(text || "").toLowerCase().match(/[a-z][a-z'-]{3,}/g) || []) {
+    if (PLAIN_STOPWORDS.has(word)) continue;
+    counts.set(word, (counts.get(word) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([word]) => word);
+}
+
+function guessCategory(text, fallback) {
+  const hay = String(text || "").toLowerCase();
+  const map = [
+    ["Money", /money|salary|price|pricing|income|saving|invest|budget|debt|wealth|earn|spend/],
+    ["Power", /power|status|room|negotiat|boundar|hierarchy|confiden|respect/],
+    ["Relationships", /relationship|dating|marriage|friend|family|partner|love|mother/],
+    ["Digital", /instagram|content|online|digital|audience|follower|creator|business|sell/],
+    ["Wellness", /sleep|calm|anxiety|nervous|burnout|habit|health|rest|body/],
+    ["Mindset", /mind|think|belief|fear|self|worth|identity|discipline|overthink/],
+  ];
+  for (const [name, pattern] of map) if (pattern.test(hay)) return name;
+  return fallback || "Mindset";
+}
+
+const trimWords = (value, count) => String(value || "").replace(/\s+/g, " ").trim().split(" ").slice(0, count).join(" ");
+
+/**
+ * Writes the whole product page with no AI provider. Deterministic and honest:
+ * every line comes from the ebook's own words, its title or the owner's notes.
+ */
+export function fallbackAnalysis({ ebook = {}, text = "", notes = "", currency = "INR", settings = {} } = {}) {
+  const body = String(text || "").trim();
+  const noteText = String(notes || "").trim();
+  const all = `${body}\n${noteText}`;
+  const sentences = sentencesFrom(body, 24);
+  const headings = headingsFrom(body, 8);
+  const topics = keywordsFrom(all, 10);
+  const title =
+    clipText(ebook.title, 110) ||
+    clipText(noteText.split(/\n/)[0], 90) ||
+    clipText(sentences[0], 70) ||
+    "The Rules Nobody Hands You";
+  const category = guessCategory(all, ebook.category);
+  const pages = Math.max(8, Number(ebook.pages) || Math.round((body.split(/\s+/).filter(Boolean).length || 1800) / 220));
+  const price = Math.max(0, Number(ebook.price) || 99);
+  const mrp = Math.max(price * 3, Number(ebook.mrp) || price * 4);
+  const topicLine = topics.length ? topics.slice(0, 5).join(", ") : category.toLowerCase();
+
+  const oneLine =
+    clipText(ebook.subtitle, 180) ||
+    clipText(noteText, 180) ||
+    clipText(sentences[0], 170) ||
+    `${title} — the short, honest version, written to be used the same day.`;
+  const subtitle = clipText(oneLine, 180);
+
+  const firstBeat =
+    trimWords(noteText, 55) ||
+    `Most people meet this problem with advice that sounds polite and changes nothing. This is the version that skips the performance.`;
+  const middleBeat = sentences.length
+    ? sentences.slice(0, 4).join(" ")
+    : `It covers ${topicLine} in short chapters, with lines you can copy straight into a real conversation.`;
+  const refundDays = Number(settings.refund_window_days) || 3;
+  const lastBeat = `Read it in one sitting. Use one thing from it the same day. If it does not land, ask within ${refundDays} days and we make it right.`;
+  const insideBeat = `You will find the useful part handled without padding: short chapters, plain words, and one thing you can try before the day ends.`;
+  const description = [firstBeat, middleBeat, insideBeat, lastBeat].filter(Boolean).join("\n\n");
+
+  const highlights = (headings.length >= 3 ? headings : sentences)
+    .map((line) => clipText(line.replace(/^[-•*\s]+/, ""), 88))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (highlights.length < 3) {
+    for (const topic of [...topics.slice(0, 3), category.toLowerCase()]) {
+      if (highlights.length >= 4) break;
+      highlights.push(`What actually works with ${topic}`);
+    }
+  }
+
+  const audienceMatch = noteText.match(/for (?:women|men|people|anyone|girls|creators)[^.]{10,160}\./i);
+  const audience =
+    clipText(audienceMatch && audienceMatch[0], 300) ||
+    "For anyone who wants the short, honest version of this without a 300-page commitment. Not for you if you want hype, theory, or someone else to do the work.";
+
+  const sample = body
+    ? trimWords(body, 240)
+    : noteText
+      ? trimWords(noteText, 240)
+      : trimWords(firstBeat, 120);
+
+  const seoTitle = clipText(`${title} — ${category} ebook`, 58);
+  const seoDescription = clipText(`${subtitle} Instant PDF download, ${pages} pages.`, 152);
+
+  return {
+    title,
+    subtitle,
+    hook: clipText(sentences[0] || subtitle, 200),
+    category,
+    badge: clipText(ebook.badge, 40),
+    pages,
+    price,
+    mrp,
+    description,
+    highlights,
+    painPoints: [
+      "I already know this. I just do not do it.",
+      "I do not want another 300-page book I will never finish.",
+      "I cannot tell if this is really for someone like me.",
+      "I do not want to feel sold to.",
+    ],
+    triggers: ["cost of waiting", "identity", "being seen", "specificity", "permission"],
+    audience,
+    faq: [
+      {
+        q: "How do I get it after paying?",
+        a: "The PDF unlocks on your order page the moment payment is confirmed. It stays there, so you can download it again any time.",
+      },
+      {
+        q: "How long is it?",
+        a: `A ${pages}-page PDF, written to be read in one sitting. It works on your phone, laptop or printed.`,
+      },
+      { q: "Is this for me?", a: clipText(audience, 240) },
+      {
+        q: "What if it does not land?",
+        a: `Tell us what you actually needed within ${refundDays} days. We send material matched to it first, and refund you in full if it still is not right.`,
+      },
+      {
+        q: "How do I pay?",
+        a: `UPI, cards and netbanking through the secure checkout. One payment in ${currency}, no subscription.`,
+      },
+    ],
+    sample,
+    seoTitle,
+    seoDescription,
+    emailSubject: clipText(`New: ${title}`, 55),
+    emailBody: `Hi,\n\n${title} is live. ${clipText(subtitle, 110)}\n\n${trimWords(description, 45)}\n\nRead it here: {link}\n\n— Neverbasic Diva`,
+    tags: Array.from(
+      new Set([
+        ...topics.slice(0, 4),
+        category.toLowerCase(),
+        "ebook",
+        "instant pdf",
+        "pdf download",
+        "self help ebook",
+      ])
+    ).slice(0, 8),
+  };
+}
+
+// AI output wins where it has something real to say; the built-in writer fills
+// every gap so the product page is never half-empty.
+function mergeAnalysis(base, ai = {}) {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(ai)) {
+    if (Array.isArray(value)) {
+      if (value.length) out[key] = value;
+    } else if (typeof value === "string") {
+      if (value.trim()) out[key] = value;
+    } else if (typeof value === "number") {
+      if (Number.isFinite(value) && value > 0) out[key] = value;
+    }
+  }
+  if (Number(out.mrp) < Number(out.price)) out.mrp = Number(out.price) * 3;
+  return out;
+}
+
+function fallbackSection(section, ebook, notes, settings) {
+  const full = fallbackAnalysis({
+    ebook,
+    text: ebook.sample || ebook.description || "",
+    notes,
+    currency: settings.currency || "INR",
+    settings,
+  });
+  const map = {
+    title: { title: full.title },
+    subtitle: { subtitle: full.subtitle },
+    description: { description: full.description },
+    highlights: { highlights: full.highlights },
+    badge: { badge: full.badge },
+    category: { category: full.category },
+    pricing: { price: full.price, mrp: full.mrp },
+    faq: { faq: full.faq },
+    sample: { sample: full.sample },
+    seo: { seoTitle: full.seoTitle, seoDescription: full.seoDescription },
+    triggers: { painPoints: full.painPoints, triggers: full.triggers, audience: full.audience },
+    email: { emailSubject: full.emailSubject, emailBody: full.emailBody },
+    tags: { tags: full.tags },
+  };
+  return map[section] || {};
 }
 
 /**
@@ -631,22 +857,47 @@ export async function analyzeEbook({
     .filter(Boolean)
     .join("\n\n");
 
-  const result = await aiChat({
-    settings,
-    env,
-    json: true,
-    maxTokens: 6000,
-    messages: [
-      { role: "system", content: systemPrompt(tone || settings.ai_tone) },
-      { role: "user", content: user },
-    ],
-  });
+  const base = fallbackAnalysis({ ebook: { ...ebook, title }, text, notes, currency, settings });
+  let result;
+  try {
+    result = await aiChat({
+      settings,
+      env,
+      json: true,
+      maxTokens: 6000,
+      messages: [
+        { role: "system", content: systemPrompt(tone || settings.ai_tone) },
+        { role: "user", content: user },
+      ],
+    });
+  } catch (error) {
+    // No key, dead key or every free quota spent: still hand back a full page.
+    return {
+      ...base,
+      _meta: {
+        provider: "Built-in writer",
+        model: "no-provider",
+        attempts: (error && error.attempts) || [],
+        fallback: true,
+        reason: clipText(error && error.message, 200),
+      },
+    };
+  }
   const parsed = parseJsonLoose(result.text);
   if (!parsed || typeof parsed !== "object") {
-    throw new AiError(`${result.provider} returned unreadable copy. Hit generate again — it usually lands cleanly on the second try.`, result.attempts);
+    return {
+      ...base,
+      _meta: {
+        provider: "Built-in writer",
+        model: "unreadable-ai",
+        attempts: result.attempts,
+        fallback: true,
+        reason: `${result.provider} returned unreadable copy.`,
+      },
+    };
   }
   return {
-    ...normaliseAnalysis(parsed, ebook),
+    ...mergeAnalysis(base, normaliseAnalysis(parsed, { ...ebook, title })),
     _meta: { provider: result.provider, model: result.model, attempts: result.attempts },
   };
 }
@@ -715,19 +966,33 @@ export async function generateSection({ settings = {}, env = {}, section, ebook 
     .filter(Boolean)
     .join("\n");
 
-  const result = await aiChat({
-    settings,
-    env,
-    json: true,
-    maxTokens: 1600,
-    messages: [
-      { role: "system", content: systemPrompt(tone || settings.ai_tone) },
-      { role: "user", content: context },
-    ],
-  });
+  const base = fallbackSection(section, ebook, notes, settings);
+  let result;
+  try {
+    result = await aiChat({
+      settings,
+      env,
+      json: true,
+      maxTokens: 1600,
+      messages: [
+        { role: "system", content: systemPrompt(tone || settings.ai_tone) },
+        { role: "user", content: context },
+      ],
+    });
+  } catch (error) {
+    return {
+      patch: base,
+      meta: {
+        provider: "Built-in writer",
+        model: "no-provider",
+        attempts: (error && error.attempts) || [],
+        fallback: true,
+        reason: clipText(error && error.message, 200),
+      },
+    };
+  }
   const parsed = parseJsonLoose(result.text);
-  if (!parsed || typeof parsed !== "object") throw new AiError("The model returned unreadable copy. Try regenerating.", result.attempts);
-  const normalised = normaliseAnalysis(parsed, ebook);
+  const normalised = parsed && typeof parsed === "object" ? normaliseAnalysis(parsed, ebook) : {};
   const keyMap = {
     title: ["title"],
     subtitle: ["subtitle"],
@@ -744,8 +1009,17 @@ export async function generateSection({ settings = {}, env = {}, section, ebook 
     tags: ["tags"],
   };
   const patch = {};
-  for (const key of keyMap[section]) patch[key] = normalised[key];
-  return { patch, meta: { provider: result.provider, model: result.model, attempts: result.attempts } };
+  for (const key of keyMap[section]) {
+    const value = normalised[key];
+    const usable = Array.isArray(value) ? value.length > 0 : typeof value === "number" ? value > 0 : Boolean(value && String(value).trim());
+    patch[key] = usable ? value : base[key];
+  }
+  return {
+    patch,
+    meta: parsed && typeof parsed === "object"
+      ? { provider: result.provider, model: result.model, attempts: result.attempts }
+      : { provider: "Built-in writer", model: "unreadable-ai", attempts: result.attempts, fallback: true },
+  };
 }
 
 /**
@@ -802,6 +1076,99 @@ const BLOCK_TYPES = [
   "proof", "whatsapp",
 ];
 
+// A plain-language layout that still responds to the brief (dark/gold, minimal,
+// warm) when no provider answers. Uses only fields the storefront understands.
+export function fallbackStore({ prompt = "", catalog = [], settings = {} } = {}) {
+  const brief = String(prompt || "").toLowerCase();
+  const dark = /dark|noir|black|midnight|expensive|luxury|gold/.test(brief);
+  const minimal = /minimal|clean|quiet|simple|editorial/.test(brief);
+  const books = (catalog || []).slice(0, 3).map((book) => book.title).filter(Boolean);
+  const lead = books[0] || "the library";
+  const id = () => `block-${Math.random().toString(36).slice(2, 8)}`;
+  const blocks = [
+    {
+      type: "hero",
+      id: id(),
+      eyebrow: "short ebooks · instant PDF",
+      title: "The rules they never *taught you.*",
+      sub: "Honest, short ebooks on money, people and self-worth. Read one in a sitting, use it the same day.",
+      note: "Instant download after payment. No subscription, no waiting list.",
+      primaryLabel: "Browse the library",
+      primaryLink: "/ebooks",
+      secondaryLabel: "Start with {price}",
+      secondaryLink: "/ebooks",
+    },
+    {
+      type: "stats",
+      id: id(),
+      items: [
+        { value: "PDF", label: "instant delivery" },
+        { value: "1 sitting", label: "average read" },
+        { value: "100%", label: "refund promise" },
+      ],
+    },
+    {
+      type: "library",
+      id: id(),
+      eyebrow: "the library",
+      title: "Start with *one.*",
+      sub: "Every ebook is short on purpose. Pick the one that makes you slightly uncomfortable.",
+    },
+    {
+      type: "text",
+      id: id(),
+      eyebrow: "why this exists",
+      title: "Plain words, no *performance.*",
+      body: `Most advice is written to sound impressive. These ebooks are written to be used: short chapters, everyday words, and lines you can copy into a real conversation the same day.\n\nIf nothing lands, tell us and we make it right.`,
+    },
+    {
+      type: "testimonials",
+      id: id(),
+      eyebrow: "notes from readers",
+      title: "Quietly *changing* things.",
+      sub: "",
+      ctaLabel: "More on Instagram",
+    },
+    {
+      type: "faq",
+      id: id(),
+      eyebrow: "before you ask",
+      title: "Honest *answers.*",
+      sub: "Still unsure? The support form goes to a human.",
+      ctaLabel: "Open support →",
+    },
+    {
+      type: "cta",
+      id: id(),
+      badge: "instant delivery",
+      title: `Start with *${lead.replace(/\*/g, "")}.*`,
+      sub: "One payment. One PDF. One thing you can use today.",
+      primaryLabel: "Browse the library",
+      primaryLink: "/ebooks",
+      secondaryLabel: "@{insta}",
+      secondaryLink: "",
+    },
+  ];
+
+  return {
+    blocks,
+    content: {
+      nav_cta: "Get the library",
+      shop_title: "Pick the one that *stings* a little.",
+      shop_sub: "Short, honest ebooks. Instant PDF after payment.",
+    },
+    theme: {
+      shape: minimal ? "sharp" : "soft",
+      font: "editorial",
+      density: minimal ? "airy" : "cozy",
+      accent: dark ? "#C9A227" : settings.accent_color || "#B0665A",
+      ink: dark ? "#F5EFE6" : settings.ink_color || "#241E1B",
+      bg: dark ? "#121010" : settings.bg_color || "#FAF6F0",
+    },
+    meta: { provider: "Built-in builder", model: "no-provider", fallback: true },
+  };
+}
+
 export async function generateStore({ settings = {}, env = {}, prompt = "", catalog = [], tone = "" } = {}) {
   const books = (catalog || []).slice(0, 12).map((book) => `${book.title} — ${book.subtitle || ""} (${book.category || ""})`);
   const user = [
@@ -816,18 +1183,23 @@ export async function generateStore({ settings = {}, env = {}, prompt = "", cata
     "Keep each text field under 400 characters. The description in a banner is a paragraph, not a novel.",
   ].join("\n\n");
 
-  const result = await aiChat({
-    settings,
-    env,
-    json: true,
-    maxTokens: 6000,
-    messages: [
-      { role: "system", content: systemPrompt(tone || settings.ai_tone) },
-      { role: "user", content: user },
-    ],
-  });
+  let result;
+  try {
+    result = await aiChat({
+      settings,
+      env,
+      json: true,
+      maxTokens: 6000,
+      messages: [
+        { role: "system", content: systemPrompt(tone || settings.ai_tone) },
+        { role: "user", content: user },
+      ],
+    });
+  } catch {
+    return fallbackStore({ prompt, catalog, settings });
+  }
   const parsed = parseJsonLoose(result.text);
-  if (!parsed || !Array.isArray(parsed.blocks)) throw new AiError("The model did not return a usable layout. Try again.", result.attempts);
+  if (!parsed || !Array.isArray(parsed.blocks)) return fallbackStore({ prompt, catalog, settings });
 
   const blocks = [];
   for (const raw of parsed.blocks.slice(0, 14)) {
@@ -920,6 +1292,49 @@ export async function rewriteBlock({ settings = {}, env = {}, block = {}, instru
   return { patch, meta: { provider: result.provider, model: result.model, attempts: result.attempts } };
 }
 
+// Rule-based answers from the shop's own facts. Fast, always available, and the
+// same voice as the rest — used when the model is slow, out of quota or absent.
+export function fallbackReply({ question = "", settings = {}, catalog = [] } = {}) {
+  const q = String(question || "").toLowerCase();
+  const books = (catalog || []).filter((book) => book && book.title);
+  const cheapest = [...books].sort((a, b) => Number(a.price || 0) - Number(b.price || 0))[0];
+  const link = cheapest ? `/ebooks/${cheapest.slug}` : "/ebooks";
+  const support = settings.support_email || "connectgridx@gmail.com";
+  const telegram = String(settings.telegram || "Nadia_valentina9").replace(/^@/, "");
+
+  if (/refund|money back|not satisfied|cancel/.test(q)) {
+    return `If it does not land, tell us what you actually needed within ${settings.refund_window_days || 3} days. We send material matched to it first, and refund you in full if it still is not right. Start at /refund or message us at ${support}.`;
+  }
+  if (/resell|reseller|licen[cs]e/.test(q)) {
+    return settings.resell_enabled === "1"
+      ? `Resell rights are open: a one-time ${settings.resell_price || 399} licence for a full year. You sell the ebooks to your audience and keep what you charge. Details and the reseller login are on /resell.`
+      : "Resell licences are closed right now. Join the newsletter and you will hear first when they reopen.";
+  }
+  // Download questions come before payment ones: "how do I get the pdf after
+  // paying" is about delivery, even though it contains "pay".
+  if (/download|pdf|delivery|how fast|instant|access|email me|receive/.test(q)) {
+    return "The PDF unlocks on your order page the moment payment is confirmed — no email wait. The page and its link stay live, so you can download it again any time. Bought as a guest? Open /track with your reference and email.";
+  }
+  if (/pay|payment|upi|card|netbank|paypal|stripe|razorpay|price|cost|how much/.test(q)) {
+    const line = cheapest ? `The cheapest is ${cheapest.title} at ${cheapest.price} ${settings.currency || "INR"}.` : "Every ebook is priced like a cup of chai.";
+    return `${line} Pay by UPI, card or netbanking through the secure checkout. One payment, no subscription, and the PDF unlocks the second it clears.`;
+  }
+  if (/account|sign in|login|password|google/.test(q)) {
+    return "Open /account to create an account or sign in. Use the same email you bought with and every past order attaches itself. Google sign-in is there too once it is switched on in admin.";
+  }
+  if (/which|recommend|start|beginner|first|suggest/.test(q)) {
+    return cheapest
+      ? `Start with ${cheapest.title} — ${cheapest.subtitle || "short, practical and honest"}. It is ${cheapest.price} ${settings.currency || "INR"} and you can read the sample first: ${link}.`
+      : "Start with the shortest ebook in the library — it is the easiest to finish and use the same day. Open /ebooks.";
+  }
+  if (/who|support|human|help|contact|telegram/.test(q)) {
+    return `A human answers at ${support}, or on Telegram @${telegram}. For order questions, include your reference (NBD-…) so we can trace it fast. You can also use /support.`;
+  }
+  return books.length
+    ? `I can help with orders, downloads, refunds and which ebook to start with. If you are choosing, ${cheapest ? `${cheapest.title} (${cheapest.price} ${settings.currency || "INR"})` : "the library"} is the usual first pick: ${link}. For anything personal, message ${support}.`
+    : `I can help with orders, downloads, refunds and the library. For anything personal, message ${support}.`;
+}
+
 export async function assistantReply({ settings = {}, env = {}, messages = [], catalog = [] } = {}) {
   const history = (Array.isArray(messages) ? messages : [])
     .slice(-8)
@@ -940,6 +1355,8 @@ export async function assistantReply({ settings = {}, env = {}, messages = [], c
     "Answer in at most 90 words. Warm, direct, no hype, never invent discounts, refunds or delivery promises beyond the facts below.",
     "Return only the reply the customer will read — no word counts, no notes to yourself, no markdown headings.",
     "Facts: payment unlocks the PDF instantly on the order page; prices are one-time; orders are looked up at /track with reference + email; support is at /support; resell licences exist only if enabled.",
+    `Support email: ${settings.support_email || "connectgridx@gmail.com"}. Telegram: @${String(settings.telegram || "Nadia_valentina9").replace(/^@/, "")}.`,
+    "Plain everyday words. No jargon, no hype, no long dashes.",
     settings.resell_enabled === "1" ? `Resell licence: one-time ${settings.resell_price} for one year, page /resell.` : "Resell licences are currently closed.",
     books ? `Catalogue:\n${books}` : "",
     "If asked something you cannot know, say so and point to /support. Recommend one specific ebook with its link when relevant.",
@@ -947,18 +1364,28 @@ export async function assistantReply({ settings = {}, env = {}, messages = [], c
     .filter(Boolean)
     .join("\n");
 
-  const result = await aiChat({
-    settings,
-    env,
-    json: false,
-    // Gemini counts its thinking against the same budget; 450 was sometimes
-    // spent before the first sentence of the answer.
-    maxTokens: 1400,
-    timeout: 12000,
-    budget: 15000,
-    messages: [{ role: "system", content: system }, ...history],
-  });
-  return { reply: result.text.slice(0, 1200), meta: { provider: result.provider, model: result.model } };
+  const lastQuestion = [...history].reverse().find((message) => message.role === "user");
+  try {
+    const result = await aiChat({
+      settings,
+      env,
+      json: false,
+      // Gemini counts its thinking against the same budget; a small answer budget
+      // plus a short deadline keeps the widget responsive.
+      maxTokens: 900,
+      timeout: 8000,
+      budget: 11000,
+      messages: [{ role: "system", content: system }, ...history],
+    });
+    return { reply: result.text.slice(0, 1200), meta: { provider: result.provider, model: result.model } };
+  } catch (error) {
+    // Never leave a buyer staring at "Thinking…": these answers come from the
+    // shop's own facts and land instantly.
+    return {
+      reply: fallbackReply({ question: lastQuestion ? lastQuestion.content : "", settings, catalog }),
+      meta: { provider: "Quick answers", model: "built-in", fallback: true, reason: clipText(error && error.message, 160) },
+    };
+  }
 }
 
 export async function testAi({ settings = {}, env = {} } = {}) {
