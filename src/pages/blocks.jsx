@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, api, money, useSite } from "../lib/api.jsx";
+import { Link, api, money, moneyBase, useSite } from "../lib/api.jsx";
 import { Cover, Reveal, Stars, Faq, Chip } from "../ui.jsx";
 import { fillTokens, readKit } from "../lib/sitekit.js";
 import EbookCard from "./EbookCard.jsx";
@@ -69,7 +69,7 @@ function HeroArt({ block, list, lowest, tokens }) {
       <div className="art-stack art-3d">
         <Ebook3D
           ebook={book}
-          price={money(lowest)}
+          price={moneyBase(lowest)}
           badge={block.stickerTop || book.badge || ""}
           note={block.stickerNote || "instant PDF"}
         />
@@ -90,7 +90,7 @@ function HeroArt({ block, list, lowest, tokens }) {
       {block.stickerNote || block.stickerTop ? (
         <div className="art-sticker">
           <span className="art-sticker-top">{block.stickerTop}</span>
-          <strong>{money(lowest)}</strong>
+          <strong>{moneyBase(lowest)}</strong>
           <span className="art-sticker-bottom">{block.stickerNote}</span>
         </div>
       ) : null}
@@ -102,6 +102,9 @@ function HeroArt({ block, list, lowest, tokens }) {
 function Hero({ block, site, tokens }) {
   const ebooks = site.ebooks || [];
   const featured = ebooks.filter((book) => book.featured).length ? ebooks.filter((book) => book.featured) : ebooks;
+  // The hero sticker always shows the cheapest ebook in the catalogue. It is
+  // printed in the store's base currency (INR) so it matches the price typed in
+  // admin instead of the visitor's converted amount.
   const lowest = ebooks.length ? Math.min(...ebooks.map((book) => Number(book.price) || 0)) : 99;
   const layout = block.layout || "split";
   const height = block.height === "tall" ? " hero-tall" : block.height === "compact" ? " hero-compact" : "";
