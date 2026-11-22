@@ -248,6 +248,7 @@ export default function AiStudio({ data, reload }) {
         mrp: result.mrp,
         badge: result.badge,
         sample: result.sample,
+        sample_enabled: Number(result.sample_enabled ?? ebook?.sample_enabled ?? 1) === 0 ? 0 : 1,
         tags: result.tags,
         ai_meta: result,
         file_key: target.fileKey || ebook?.file_key || "",
@@ -522,11 +523,17 @@ export default function AiStudio({ data, reload }) {
               </button>
             </div>
             <div className="ai-field full">
-              <label>Free sample</label>
+              <label>Free sample (teaser — no tools, steps or prices)</label>
               <Textarea rows={7} value={result.sample || ""} onChange={(event) => patch({ sample: event.target.value })} />
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => regenerate("sample")} disabled={sectionBusy === "sample"}>
                 {sectionBusy === "sample" ? "Regenerating…" : "↻ Regenerate"}
               </button>
+              <Toggle
+                checked={Number(result.sample_enabled ?? ebook?.sample_enabled ?? 1) !== 0}
+                onChange={(next) => patch({ sample_enabled: next ? 1 : 0 })}
+                label="Show this free sample on the product page"
+                hint="Off hides the sample and every free-sample button for this ebook only."
+              />
             </div>
             <div className="ai-field">
               <label>Price</label>

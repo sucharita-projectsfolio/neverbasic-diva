@@ -210,7 +210,7 @@ export function EbookPage({ slug }) {
                   <Link to={`/checkout/${ebook.id}`} className="btn btn-primary btn-lg">
                     Get it now →
                   </Link>
-                  {site.features?.samples ? (
+                  {site.features?.samples && ebook.sample ? (
                     <button type="button" className="btn btn-ghost" onClick={() => setSampleOpen(true)}>
                       Read a free sample
                     </button>

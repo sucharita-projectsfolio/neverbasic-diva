@@ -98,6 +98,24 @@ const asList = (value, max = 10, each = 400) =>
     .filter(Boolean)
     .slice(0, max);
 
+// Public copy must never hand over the method. The prompt already forbids tool
+// names and exact amounts; these helpers make sure a stray brand, website or
+// rupee figure can never reach "What's inside" or the free sample anyway.
+const TOOL_NAME_RE = /\b[a-z0-9][a-z0-9-]*\.(?:ai|com|in|io|co|app|net|org|me|xyz|site|shop|store|dev|gg|so|ly|tv)\b/gi;
+const MONEY_RE = /(?:₹|rs\.?|inr)\s?[\d,]+(?:\s?(?:per|\/)\s?[a-z]+)?/gi;
+
+const scrubPublicText = (value) =>
+  String(value || "")
+    .replace(TOOL_NAME_RE, "a simple tool")
+    .replace(MONEY_RE, "a small amount")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+const revealsMethod = (value) => {
+  const text = String(value || "");
+  return new RegExp(TOOL_NAME_RE.source, "i").test(text) || new RegExp(MONEY_RE.source, "i").test(text);
+};
+
 /* ------------------------------ configuration ---------------------------- */
 
 // Merges the admin-saved ai_config over provider defaults and environment keys.
@@ -455,6 +473,8 @@ const systemPrompt = (tone) =>
     "- Describe what the reader will be able to do, not how amazing the book is.",
     "- Psychology must stay invisible: write the line a person actually feels. Never name a technique inside the copy.",
     "- Never promise anything the supplied text does not contain: no worksheets, templates, checklists, bonuses, community, coaching calls, bonuses or extra downloads. If the text does not show it, it does not exist.",
+    "- Never name the tools, apps, websites, platforms, channels or brands used inside the ebook, and never give the exact steps, scripts, amounts or prices it teaches. Name the outcome or the problem, never the method. A buyer must not be able to skip the ebook with what the page says.",
+    "- The free sample is a teaser, not a chapter dump: show the reader's frustration, land one sharp insight, open a loop. Stop before the method, list, tool, script or numbers. It must end wanting the next page.",
     "- SEO without keywords stuffing: use the phrases a real person would type into Google, once or twice, in natural sentences.",
     tone ? `- Brand tone for this store: ${tone}` : "",
     "Return only the requested JSON. No markdown fences, no commentary, no preamble.",
@@ -472,12 +492,12 @@ const ANALYSIS_SHAPE = `{
   "price": 99,
   "mrp": 499,
   "description": "150-230 words, 3-4 short paragraphs separated by \\n\\n. Paragraph 1: the reader's private frustration in their own words. Paragraph 2: what is actually inside, concrete. Paragraph 3: what changes for them, then a quiet close. Plain everyday words. The pull comes from being seen, not from adjectives.",
-  "highlights": ["6 outcome-led bullets, each under 90 characters, starting with a verb or a number"],
+  "highlights": ["6 curiosity bullets for 'what's inside', each under 90 characters. Tease the shift: what they will stop doing, start doing or finally understand. Never name a tool, app, website, brand, platform, amount or price and never describe the exact steps or method"],
   "painPoints": ["4 things the reader secretly thinks, in their own words"],
   "triggers": ["5 psychological hooks used, named simply e.g. 'cost of waiting'"],
   "audience": "2 sentences: exactly who this is for and who it is not for",
   "faq": [{"q": "question", "a": "honest 1-2 sentence answer"}],
-  "sample": "220-320 words of the actual opening of the ebook, in the author's voice, ending on a line that makes buying feel obvious",
+  "sample": "180-260 words of a free-sample teaser in the author's voice: the reader's real scene and frustration, one sharp insight, one psychological trigger (cost of waiting, being seen, identity, permission). Stop before the actual method — no tool, site or brand names, no step-by-step, no prices or numbers from the book. End on an open loop that makes the next page feel necessary",
   "seoTitle": "under 58 characters, includes the main search phrase and the words ebook/pdf",
   "seoDescription": "under 152 characters, the promise plus 'instant PDF download', reads like a search result not an ad",
   "emailSubject": "under 55 characters",
@@ -503,12 +523,12 @@ function normaliseAnalysis(raw, fallback = {}) {
     price,
     mrp,
     description: asString(raw?.description, 5000) || asString(fallback.description, 5000),
-    highlights: asList(raw?.highlights, 8, 180),
+    highlights: asList(raw?.highlights, 8, 180).map(scrubPublicText).filter(Boolean),
     painPoints: asList(raw?.painPoints, 8, 300),
     triggers: asList(raw?.triggers, 8, 120),
     audience: asString(raw?.audience, 700),
     faq,
-    sample: asString(raw?.sample, 4000),
+    sample: scrubPublicText(asString(raw?.sample, 4000)),
     seoTitle: asString(raw?.seoTitle, 120),
     seoDescription: asString(raw?.seoDescription, 300),
     emailSubject: asString(raw?.emailSubject, 120),
@@ -616,15 +636,23 @@ export function fallbackAnalysis({ ebook = {}, text = "", notes = "", currency =
   const insideBeat = `You will find the useful part handled without padding: short chapters, plain words, and one thing you can try before the day ends.`;
   const description = [firstBeat, middleBeat, insideBeat, lastBeat].filter(Boolean).join("\n\n");
 
+  // Curiosity first: the bullets sell the outcome, never the method. A line that
+  // names a tool, website or rupee figure is dropped, not shown.
   const highlights = (headings.length >= 3 ? headings : sentences)
     .map((line) => clipText(line.replace(/^[-•*\s]+/, ""), 88))
-    .filter(Boolean)
+    .filter((line) => Boolean(line) && !revealsMethod(line))
     .slice(0, 6);
-  if (highlights.length < 3) {
-    for (const topic of [...topics.slice(0, 3), category.toLowerCase()]) {
-      if (highlights.length >= 4) break;
-      highlights.push(`What actually works with ${topic}`);
-    }
+  const curiosityLines = [
+    `The part about ${topics[0] || category.toLowerCase()} nobody spells out`,
+    "The first move that makes it feel simpler",
+    "What almost everyone gets wrong in the first week",
+    "How to tell it is working before you spend more",
+    "The line to say when you finally have to ask",
+    "What to stop doing that quietly costs you the most",
+  ];
+  for (const line of curiosityLines) {
+    if (highlights.length >= 4) break;
+    if (!highlights.includes(line)) highlights.push(clipText(line, 88));
   }
 
   const audienceMatch = noteText.match(/for (?:women|men|people|anyone|girls|creators)[^.]{10,160}\./i);
@@ -632,11 +660,15 @@ export function fallbackAnalysis({ ebook = {}, text = "", notes = "", currency =
     clipText(audienceMatch && audienceMatch[0], 300) ||
     "For anyone who wants the short, honest version of this without a 300-page commitment. Not for you if you want hype, theory, or someone else to do the work.";
 
-  const sample = body
-    ? trimWords(body, 240)
-    : noteText
-      ? trimWords(noteText, 240)
-      : trimWords(firstBeat, 120);
+  // A teaser, not a chapter. Paragraphs that name a tool or an amount are dropped,
+  // the rest is cut short and closed on an open loop, so the method stays behind
+  // the buy button.
+  const teaserParagraphs = String(body || noteText || "")
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter((part) => part && !revealsMethod(part));
+  const teaserText = teaserParagraphs.length ? teaserParagraphs.slice(0, 2).join("\n\n") : firstBeat;
+  const sample = `${scrubPublicText(trimWords(teaserText, 140))}\n\nThe part that actually fixes it — what to do first, what to skip, and how to tell it is working — starts a page later.`;
 
   const seoTitle = clipText(`${title} — ${category} ebook`, 58);
   const seoDescription = clipText(`${subtitle} Instant PDF download, ${pages} pages.`, 152);
@@ -951,7 +983,7 @@ const SECTION_RULES = {
     shape: '{"description":"…"}',
   },
   highlights: {
-    ask: "Write 6 outcome-led 'what\\'s inside' bullets, each under 90 characters.",
+    ask: "Write 6 curiosity bullets for 'what\\'s inside', each under 90 characters. Sell the outcome or the shift: what they will stop doing, start doing or finally understand. Never name a tool, app, website, brand, platform, amount or price, and never describe the exact steps or the method — tease it.",
     shape: '{"highlights":["…"]}',
   },
   badge: { ask: "Write a 2-3 word honest badge (or empty string).", shape: '{"badge":"…"}' },
@@ -965,7 +997,7 @@ const SECTION_RULES = {
     shape: '{"faq":[{"q":"…","a":"…"}]}',
   },
   sample: {
-    ask: "Write the actual opening 220-320 words of the ebook in the author's voice. It should read like the book, not like marketing.",
+    ask: "Write the free-sample teaser in 180-260 words in the author's voice. Open with the reader's real scene and frustration, land one sharp insight, and use one psychological trigger (cost of waiting, being seen, identity, permission). Stop before the actual method: no tool, site or brand names, no step-by-step, no prices or numbers from inside the book. End on an open loop that makes the next page feel necessary.",
     shape: '{"sample":"…"}',
   },
   seo: {

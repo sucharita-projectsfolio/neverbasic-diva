@@ -251,6 +251,9 @@ async function sitePayload(env, request) {
 
 function publicEbook(row) {
   const ai = safeJson(row.ai_meta, {});
+  // Per-ebook free-sample switch. A row with no value stays visible, so nothing
+  // that already worked disappears after this deploy.
+  const sampleOn = !(row.sample_enabled === 0 || row.sample_enabled === "0");
   return {
     id: row.id,
     slug: row.slug,
@@ -267,7 +270,7 @@ function publicEbook(row) {
     featured: row.featured,
     status: row.status,
     sort: row.sort,
-    sample: row.sample || "",
+    sample: sampleOn ? row.sample || "" : "",
     tags: safeJson(row.tags, []),
     // Only the product-page fields are public — prompts and provider attempts stay private.
     ai_meta: {
@@ -279,6 +282,14 @@ function publicEbook(row) {
     },
   };
 }
+
+// A per-ebook switch arrives from a checkbox, so accept 0/1, true/false and "0".
+const flagOn = (value, fallback = 1) =>
+  value === undefined || value === null || value === ""
+    ? fallback
+    : value === false || value === 0 || value === "0"
+      ? 0
+      : 1;
 
 function safeJson(value, fallback) {
   try {
@@ -1385,13 +1396,14 @@ async function handleAdmin(request, env, url, admin) {
       }
       await db
         .prepare(
-          `UPDATE ebooks SET slug=?, title=?, subtitle=?, description=?, highlights=?, category=?, pages=?, price=?, mrp=?, cover=?, file_key=?, file_name=?, file_size=?, sample=?, tags=?, ai_meta=?, status=?, featured=?, badge=?, sort=? WHERE id=?`
+          `UPDATE ebooks SET slug=?, title=?, subtitle=?, description=?, highlights=?, category=?, pages=?, price=?, mrp=?, cover=?, file_key=?, file_name=?, file_size=?, sample=?, sample_enabled=?, tags=?, ai_meta=?, status=?, featured=?, badge=?, sort=? WHERE id=?`
         )
         .bind(
           slug, common.title, common.subtitle, common.description, common.highlights, common.category,
           common.pages, common.price, common.mrp, common.cover, common.file_key || existing.file_key,
           common.file_name || existing.file_name, common.file_size || existing.file_size,
-          common.sample || existing.sample || "", common.tags || existing.tags || "[]",
+          common.sample || existing.sample || "", flagOn(body.sample_enabled, flagOn(existing.sample_enabled, 1)),
+          common.tags || existing.tags || "[]",
           common.ai_meta || existing.ai_meta || "{}", common.status,
           common.featured, common.badge, common.sort, id
         )
@@ -1404,13 +1416,13 @@ async function handleAdmin(request, env, url, admin) {
     if (clash) slug = `${slug}-${U.hex(2)}`;
     await db
       .prepare(
-        `INSERT INTO ebooks (id, slug, title, subtitle, description, highlights, category, pages, price, mrp, cover, file_key, file_name, file_size, sample, tags, ai_meta, status, featured, badge, sort, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO ebooks (id, slug, title, subtitle, description, highlights, category, pages, price, mrp, cover, file_key, file_name, file_size, sample, sample_enabled, tags, ai_meta, status, featured, badge, sort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         newId, slug, common.title, common.subtitle, common.description, common.highlights, common.category,
         common.pages, common.price, common.mrp, common.cover, common.file_key, common.file_name,
-        common.file_size, common.sample, common.tags, common.ai_meta || "{}", common.status,
+        common.file_size, common.sample, flagOn(body.sample_enabled, 1), common.tags, common.ai_meta || "{}", common.status,
         common.featured, common.badge, common.sort, new Date().toISOString()
       )
       .run();

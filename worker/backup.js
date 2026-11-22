@@ -48,7 +48,7 @@ const TABLES = {
     columns: [
       "id", "slug", "title", "subtitle", "description", "highlights", "category", "pages", "price",
       "mrp", "cover", "file_key", "file_name", "file_size", "status", "featured", "badge", "sort",
-      "created_at", "ai_meta", "sample", "tags",
+      "created_at", "ai_meta", "sample", "sample_enabled", "tags",
     ],
     label: "ebooks",
   },
@@ -385,7 +385,9 @@ async function upsertRows(env, name, rows) {
     for (const raw of group) {
       const row = cleanRow(table, raw);
       if (!row[table.key]) continue;
-      statements.push(env.DB.prepare(sql).bind(...columns.map((column) => row[column])));
+      // Older backup files predate a column; null keeps the insert valid and the
+      // schema default (sample on) is what the store already showed.
+      statements.push(env.DB.prepare(sql).bind(...columns.map((column) => (row[column] === undefined ? null : row[column]))));
     }
     if (!statements.length) continue;
     if (typeof env.DB.batch === "function") {

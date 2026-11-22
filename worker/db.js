@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS ebooks (
   file_key TEXT DEFAULT '',
   file_name TEXT DEFAULT '',
   file_size INTEGER DEFAULT 0,
+  sample_enabled INTEGER DEFAULT 1,
   status TEXT DEFAULT 'active',
   featured INTEGER DEFAULT 0,
   badge TEXT DEFAULT '',
@@ -398,6 +399,7 @@ export const DEFAULT_SETTINGS = {
 export const MIGRATION_ALTERS = [
   "ALTER TABLE ebooks ADD COLUMN ai_meta TEXT DEFAULT '{}'",
   "ALTER TABLE ebooks ADD COLUMN sample TEXT DEFAULT ''",
+  "ALTER TABLE ebooks ADD COLUMN sample_enabled INTEGER DEFAULT 1",
   "ALTER TABLE ebooks ADD COLUMN tags TEXT DEFAULT '[]'",
   "ALTER TABLE orders ADD COLUMN currency TEXT DEFAULT 'INR'",
   "ALTER TABLE orders ADD COLUMN amount_charged REAL DEFAULT 0",

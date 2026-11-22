@@ -760,6 +760,8 @@ const blankEbook = {
   file_key: "",
   file_name: "",
   file_size: 0,
+  sample: "",
+  sample_enabled: 1,
   status: "active",
   featured: 1,
   badge: "",
@@ -863,6 +865,7 @@ function Ebooks({ data, reload }) {
                   <strong>{ebook.title}</strong>
                   <small className="cell-sub">
                     {ebook.category} · {ebook.pages} pages {ebook.featured ? "· featured" : ""}
+                    {Number(ebook.sample_enabled ?? 1) === 0 ? " · sample off" : ""}
                   </small>
                 </td>
                 <td>{money(ebook.price)}</td>
@@ -921,9 +924,21 @@ function Ebooks({ data, reload }) {
           <Field label="Description">
             <Textarea rows={4} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
           </Field>
-          <Field label="What's inside" hint="One line per bullet, maximum 10.">
+          <Field label="What's inside" hint="One line per bullet, maximum 10. Sell the outcome, not the tool or the steps.">
             <Textarea rows={5} value={form.highlights} onChange={(event) => setForm({ ...form, highlights: event.target.value })} />
           </Field>
+          <Field
+            label="Free sample"
+            hint="Teaser only. Open with the reader's frustration, then stop before the method. No tool or website names, no exact steps or prices."
+          >
+            <Textarea rows={6} value={form.sample || ""} onChange={(event) => setForm({ ...form, sample: event.target.value })} />
+          </Field>
+          <Toggle
+            checked={Number(form.sample_enabled ?? 1) !== 0}
+            onChange={(next) => setForm({ ...form, sample_enabled: next ? 1 : 0 })}
+            label="Show the free sample for this ebook"
+            hint="Off hides the sample block and the free-sample buttons on this product page only. The text is kept, so you can switch it back on anytime."
+          />
           <div className="three-col">
             <Field label="Price (₹)">
               <Input type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} />
