@@ -325,7 +325,7 @@ export const DEFAULT_SETTINGS = {
   ai_enabled: "1",
   ai_tone: "sharp, warm, human and specific — direct-response copy without fake claims",
   ai_config:
-    '{"temperature":0.85,"providers":[{"id":"gemini","enabled":true,"apiKey":"","models":["gemini-3.6-flash","gemini-3.5-flash","gemini-3.8-flash","gemini-3.5-flash-lite"]},{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","nvidia/nemotron-3.5-lightning:free","inclusionai/ling-3.2-flash:free","recursive/flint-v1.0:free"]}]}',
+    '{"temperature":0.85,"providers":[{"id":"gemini","enabled":true,"apiKey":"","models":["gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite"]},{"id":"groq","enabled":true,"apiKey":"","models":["openai/gpt-oss-120b","qwen/qwen3.8-27b","openai/gpt-oss-20b","openai/gpt-oss-safeguard-20b"]},{"id":"openrouter","enabled":true,"apiKey":"","models":["nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-lightning:free","recursive/flint-v1.0:free","baidu/ernie-5.5-flash-preview:free","particle-ai/particle-1:free","inclusionai/ling-3.2-flash:free"]}]}',
 
   // Storefront feature switches (JSON, edited in Studio → Growth).
   store_features:

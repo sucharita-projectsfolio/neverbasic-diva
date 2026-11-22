@@ -1,7 +1,7 @@
-// AI layer — Groq first (free, fast, 120B), then OpenRouter free models, then any
-// custom OpenAI-compatible endpoint. Every provider/model is tried in order and a
-// quota, rate limit, bad key or outage silently falls through to the next one, so
-// one exhausted free tier never breaks the store.
+// AI layer — Groq first (free, fast, 120B), then Gemini, then OpenRouter free
+// models, then any custom OpenAI-compatible endpoint. Every provider/model is
+// tried in order and a quota, rate limit, bad key or outage silently falls
+// through to the next one, so one exhausted free tier never breaks the store.
 import { clean } from "./util.js";
 
 export const PROVIDER_CATALOG = {
@@ -9,11 +9,11 @@ export const PROVIDER_CATALOG = {
     label: "Google Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    // Gemini writes the product-page copy first and everything else is the
-    // fallback. Verified against a live key: 3.6-flash and 3.5-flash answer
-    // hard JSON reliably; 3.8-flash occasionally returns 503 on high demand, so
-    // it sits behind the two steadier models.
-    models: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"],
+    // Gemini is the quality fallback behind Groq. Verified against live keys:
+    // 3.6-flash and 3.5-flash answer with strong JSON when capacity is free and
+    // fail fast with 503 when it is not; flash-lite is the steady backstop.
+    // 3.8-flash is not in the chain — it queues for 30s+ instead of answering.
+    models: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"],
     jsonMode: true,
   },
   groq: {
@@ -32,20 +32,28 @@ export const PROVIDER_CATALOG = {
     envKeys: ["OPENROUTER_API_KEY", "OPENROUTER_KEY"],
     // OpenRouter retires free slugs without notice, so these were re-verified
     // against /api/v1/models and real completions. Ordered biggest model first:
-    // Nemotron 3 Ultra (550B) writes the strongest copy, then Ernie 5.5, then
-    // Particle. Each one answers with reasoning_effort=low so the whole budget
-    // is not spent thinking.
+    // Each one answers with reasoning_effort=low so the whole budget is not
+    // spent thinking.
+    // Live-key order: Ultra answers in 1-4s, Lightning in ~1-7s, Flint in ~1s.
+    // Ernie, Particle and Ling are kept at the back because they answer only
+    // between rate limits; a 429 there is skipped in milliseconds.
     models: [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "recursive/flint-v1.0:free",
       "baidu/ernie-5.5-flash-preview:free",
       "particle-ai/particle-1:free",
-      "nvidia/nemotron-3.5-lightning:free",
       "inclusionai/ling-3.2-flash:free",
-      "recursive/flint-v1.0:free",
     ],
     jsonMode: false,
   },
 };
+
+// Order the chain is tried in. Groq answers in about two seconds and its 120B
+// gpt-oss writes the strongest copy of the free models, so it goes first; Gemini
+// is the quality fallback when Groq's daily quota is spent, and OpenRouter is
+// the last resort. Verified against live keys for all three.
+export const PROVIDER_ORDER = ["groq", "gemini", "openrouter"];
 
 // Model ids we previously shipped that no longer answer (retired free slugs or
 // models that left the free tier). Saved configs are cleaned of these on boot so
@@ -62,6 +70,9 @@ export const RETIRED_MODELS = new Set([
   "google/gemma-4-26b-a4b-it:free",
   "google/gemma-4-31b-it:free",
   "liquid/lfm-3-1.7b:free",
+  // Exists, but queues for 30s+ instead of answering, so it must never sit in
+  // front of the working models again.
+  "gemini-3.8-flash",
 ]);
 
 export class AiError extends Error {
@@ -101,7 +112,8 @@ export function readAiConfig(settings = {}, env = {}) {
   const savedProviders = Array.isArray(saved.providers) ? saved.providers : [];
   const providers = [];
 
-  for (const [id, meta] of Object.entries(PROVIDER_CATALOG)) {
+  for (const id of PROVIDER_ORDER) {
+    const meta = PROVIDER_CATALOG[id];
     const user = savedProviders.find((entry) => entry && entry.id === id) || {};
     const envKey = meta.envKeys.map((key) => env[key]).find((value) => Boolean(value)) || "";
     const savedKey = asString(user.apiKey, 400);
@@ -164,7 +176,8 @@ export function aiStatus(settings = {}, env = {}) {
       openrouter: Boolean(env.OPENROUTER_API_KEY || env.OPENROUTER_KEY),
     },
     providers: [
-      ...Object.entries(PROVIDER_CATALOG).map(([id, meta]) => {
+      ...PROVIDER_ORDER.map((id) => {
+        const meta = PROVIDER_CATALOG[id];
         const saved = (config.raw.providers || []).find((entry) => entry && entry.id === id) || {};
         const resolved = config.providers.find((entry) => entry.id === id);
         return {
@@ -220,7 +233,7 @@ export async function aiChat({
   json = false,
   temperature,
   maxTokens = 3000,
-  timeout = 40000,
+  timeout = 30000,
   budget = 90000,
 } = {}) {
   if (settings.ai_enabled === "0") throw new AiError("AI is switched off in Admin → AI studio.");
@@ -441,6 +454,7 @@ const systemPrompt = (tone) =>
     "- No AI voice: no rule-of-three in every sentence, no em-dash pile-ups, no 'it's not just X, it's Y', no rhetorical questions stacked on each other.",
     "- Describe what the reader will be able to do, not how amazing the book is.",
     "- Psychology must stay invisible: write the line a person actually feels. Never name a technique inside the copy.",
+    "- Never promise anything the supplied text does not contain: no worksheets, templates, checklists, bonuses, community, coaching calls, bonuses or extra downloads. If the text does not show it, it does not exist.",
     "- SEO without keywords stuffing: use the phrases a real person would type into Google, once or twice, in natural sentences.",
     tone ? `- Brand tone for this store: ${tone}` : "",
     "Return only the requested JSON. No markdown fences, no commentary, no preamble.",
@@ -696,6 +710,27 @@ function mergeAnalysis(base, ai = {}) {
       if (Number.isFinite(value) && value > 0) out[key] = value;
     }
   }
+  // Models sometimes stop early on lists (two FAQs instead of five). The page
+  // must still be complete, so top up from the built-in writer without dupes.
+  const ensure = (key, min) => {
+    const current = Array.isArray(out[key]) ? out[key].slice() : [];
+    for (const item of base[key] || []) {
+      if (current.length >= min) break;
+      if (key === "faq") {
+        const question = String(item && item.q ? item.q : "").toLowerCase();
+        if (question && !current.some((row) => String(row && row.q ? row.q : "").toLowerCase() === question)) current.push(item);
+      } else if (!current.includes(item)) {
+        current.push(item);
+      }
+    }
+    out[key] = current;
+  };
+  ensure("highlights", 4);
+  ensure("faq", 4);
+  ensure("painPoints", 3);
+  ensure("triggers", 3);
+  ensure("tags", 5);
+  if (String(out.description || "").length < 380) out.description = base.description;
   if (Number(out.mrp) < Number(out.price)) out.mrp = Number(out.price) * 3;
   return out;
 }

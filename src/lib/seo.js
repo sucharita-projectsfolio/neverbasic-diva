@@ -56,6 +56,46 @@ const clip = (value, max = 158) => {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 };
 
+// Keeps the search title under 65 characters even when the AI title is long:
+// trim the promise, never the brand.
+function titleWithBrand(value, brand) {
+  const text = esc(value).replace(/\s+/g, " ").trim();
+  if (!brand || text.toLowerCase().includes(brand.toLowerCase())) return clip(text, 65);
+  const suffix = ` | ${brand}`;
+  return `${clip(text, Math.max(24, 65 - suffix.length))}${suffix}`;
+}
+
+function ebookSeo(ebook, brand, canonical, home) {
+  const ai = ebook.ai_meta && typeof ebook.ai_meta === "object" ? ebook.ai_meta : {};
+  const description = clip(ai.seoDescription || ebook.description || ebook.subtitle || `${ebook.title} — an ebook by ${brand}.`);
+  const seoTitle = titleWithBrand(ai.seoTitle || `${ebook.title} — ${ebook.category} ebook`, brand);
+  return {
+    title: seoTitle,
+    description,
+    image: ebook.cover || undefined,
+    jsonLd: [
+      home,
+      {
+        "@context": "https://schema.org",
+        "@type": "Book",
+        name: ebook.title,
+        bookFormat: "https://schema.org/EBook",
+        inLanguage: "en",
+        description,
+        url: canonical,
+        author: { "@type": "Organization", name: brand },
+        offers: {
+          "@type": "Offer",
+          url: canonical,
+          price: Number(ebook.price) || 0,
+          priceCurrency: "INR",
+          availability: "https://schema.org/InStock",
+        },
+      },
+    ],
+  };
+}
+
 export function seoForPath(pathname, site, overrides = {}) {
   const settings = (site && site.settings) || {};
   const brand = settings.brand_name || "Neverbasic Diva";
@@ -119,32 +159,7 @@ export function seoForPath(pathname, site, overrides = {}) {
     const slug = decodeURIComponent(clean.slice("/ebooks/".length));
     const ebook = ebooks.find((book) => book.slug === slug);
     if (!ebook) return { ...base, title: `Ebook not found | ${brand}`, robots: "noindex, follow" };
-    return {
-      ...base,
-      title: `${ebook.title} — ${ebook.category} ebook | ${brand}`,
-      description: clip(ebook.description || ebook.subtitle || `${ebook.title} — an ebook by ${brand}.`),
-      image: ebook.cover || undefined,
-      jsonLd: [
-        home,
-        {
-          "@context": "https://schema.org",
-          "@type": "Book",
-          name: ebook.title,
-          bookFormat: "https://schema.org/EBook",
-          inLanguage: "en",
-          description: clip(ebook.description || ebook.subtitle || ebook.title),
-          url: canonical,
-          author: { "@type": "Organization", name: brand },
-          offers: {
-            "@type": "Offer",
-            url: canonical,
-            price: Number(ebook.price) || 0,
-            priceCurrency: "INR",
-            availability: "https://schema.org/InStock",
-          },
-        },
-      ],
-    };
+    return { ...base, ...ebookSeo(ebook, brand, canonical, home) };
   }
 
   if (clean === "/resell") {

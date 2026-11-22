@@ -322,7 +322,7 @@ export default function AiStudio({ data, reload }) {
     <div className="stack-lg">
       <Card
         title="Provider chain"
-        hint="Gemini writes every product page first, then Groq's 120B gpt-oss, then OpenRouter's Nemotron 3 Ultra 550B. A dead model or exhausted quota is skipped automatically, so one bad key never breaks the store."
+        hint="Groq's 120B gpt-oss writes every product page first (about two seconds), then Gemini, then OpenRouter. A dead model or exhausted quota is skipped automatically, so one bad key never breaks the store."
         actions={
           <>
             <Button size="sm" variant="secondary" onClick={test} loading={testing}>
@@ -347,7 +347,7 @@ export default function AiStudio({ data, reload }) {
             hint={
               provider("gemini").hasKey
                 ? `Saved (${provider("gemini").keySource}). Leave blank to keep it.`
-                : "Free at aistudio.google.com → API keys. Used first for product pages."
+                : "Free at aistudio.google.com → API keys. Quality fallback behind Groq."
             }
           >
             <Input
@@ -358,7 +358,7 @@ export default function AiStudio({ data, reload }) {
               autoComplete="off"
             />
           </Field>
-          <Field label="Groq API key" hint={provider("groq").hasKey ? `Saved (${provider("groq").keySource}). Leave blank to keep it.` : "Free at console.groq.com → API keys"}>
+          <Field label="Groq API key" hint={provider("groq").hasKey ? `Saved (${provider("groq").keySource}). Leave blank to keep it. Fastest, used first.` : "Free at console.groq.com → API keys. Used first."}>
             <Input type="password" value={keys.groq} onChange={(event) => setKeys({ ...keys, groq: event.target.value })} placeholder="gsk_…" autoComplete="off" />
           </Field>
           <Field label="OpenRouter API key" hint={provider("openrouter").hasKey ? `Saved (${provider("openrouter").keySource}). Leave blank to keep it.` : "Free at openrouter.ai/keys"}>
@@ -372,14 +372,14 @@ export default function AiStudio({ data, reload }) {
           </Field>
         </div>
         <div className="two-col">
-          <Field label="Gemini models (in order)" hint="First model that answers wins. Comma separated.">
+          <Field label="Gemini models (in order)" hint="Tried after Groq. First model that answers wins.">
             <Textarea rows={2} value={models.gemini} onChange={(event) => setModels({ ...models, gemini: event.target.value })} />
           </Field>
           <Field label="Groq models (in order)" hint="Fallback when Gemini is unavailable.">
             <Textarea rows={2} value={models.groq} onChange={(event) => setModels({ ...models, groq: event.target.value })} />
           </Field>
         </div>
-        <Field label="OpenRouter models (in order)" hint="Last fallback. Free model ids, comma separated.">
+                  <Field label="OpenRouter models (in order)" hint="Last resort. Free model ids, comma separated.">
           <Textarea rows={2} value={models.openrouter} onChange={(event) => setModels({ ...models, openrouter: event.target.value })} />
         </Field>
         <div className="two-col">

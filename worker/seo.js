@@ -182,10 +182,12 @@ function seoFor(path, data, origin, search) {
     const description = clip(
       ai.seoDescription || ebook.description || ebook.subtitle || `${ebook.title} — an ebook by ${brand}.`
     );
-    const seoTitle = clip(ai.seoTitle || `${ebook.title} — ${ebook.category} ebook`, 60);
+    const seoTitle = ai.seoTitle || `${ebook.title} — ${ebook.category} ebook`;
+    // Keep the search title under 65 characters: trim the promise, not the brand.
+    const suffix = seoTitle.toLowerCase().includes(brand.toLowerCase()) ? "" : ` | ${brand}`;
     return {
       ...base,
-      title: seoTitle.includes(brand) ? seoTitle : `${seoTitle} | ${brand}`,
+      title: `${clip(seoTitle, Math.max(24, 65 - suffix.length))}${suffix}`,
       description,
       image: ebook.cover || undefined,
       keywords: Array.from(
