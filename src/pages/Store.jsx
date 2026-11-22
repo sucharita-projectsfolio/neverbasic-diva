@@ -157,7 +157,39 @@ export function EbookPage({ slug }) {
               {discount ? <Chip tone="accent">{discount}% off</Chip> : null}
               <span className="price-compare">≈ one cup of chai</span>
             </Reveal>
-            <Reveal delay={120}>
+            {/* The buy box sits above the description: a ready buyer should never
+                have to scroll past the long copy to pay. */}
+            <Reveal delay={120} className="buy-box">
+              <div className="buy-box-top">
+                <div>
+                  <span className="buy-label">Instant download</span>
+                  <strong>{money(ebook.price)}</strong>
+                </div>
+                <div className="buy-actions">
+                  <Link to={`/checkout/${ebook.id}`} className="btn btn-primary btn-lg">
+                    Get it now →
+                  </Link>
+                  {site.features?.samples && ebook.sample ? (
+                    <button type="button" className="btn btn-ghost" onClick={() => setSampleOpen(true)}>
+                      Read a free sample
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <p className="buy-fine">
+                Pay by UPI, card or netbanking. Your PDF unlocks immediately and stays on your order page
+                forever.
+              </p>
+              {site.features?.trustBadges !== false ? (
+                <div className="buy-trust">
+                  <span>✿ 100% refund promise</span>
+                  <span>✿ No subscription</span>
+                  <span>✿ Personal licence</span>
+                  <span>✿ Instant PDF</span>
+                </div>
+              ) : null}
+            </Reveal>
+            <Reveal delay={160}>
               <div className="detail-desc">
                 {String(ebook.description || "")
                   .split(/\n{2,}/)
@@ -200,36 +232,6 @@ export function EbookPage({ slug }) {
                 <p>{ebook.ai_meta.audience}</p>
               </Reveal>
             ) : null}
-            <Reveal delay={200} className="buy-box">
-              <div className="buy-box-top">
-                <div>
-                  <span className="buy-label">Instant download</span>
-                  <strong>{money(ebook.price)}</strong>
-                </div>
-                <div className="buy-actions">
-                  <Link to={`/checkout/${ebook.id}`} className="btn btn-primary btn-lg">
-                    Get it now →
-                  </Link>
-                  {site.features?.samples && ebook.sample ? (
-                    <button type="button" className="btn btn-ghost" onClick={() => setSampleOpen(true)}>
-                      Read a free sample
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <p className="buy-fine">
-                Pay by UPI, card or netbanking. Your PDF unlocks immediately and stays on your order page
-                forever.
-              </p>
-              {site.features?.trustBadges !== false ? (
-                <div className="buy-trust">
-                  <span>✿ 100% refund promise</span>
-                  <span>✿ No subscription</span>
-                  <span>✿ Personal licence</span>
-                  <span>✿ Instant PDF</span>
-                </div>
-              ) : null}
-            </Reveal>
             {bundleOffer ? (
               <Reveal delay={220}>
                 <Link to={`/bundle/${bundleOffer.slug}`} className="bundle-upsell">

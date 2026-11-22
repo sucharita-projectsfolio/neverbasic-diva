@@ -771,7 +771,15 @@ ul, ol {
 .art-card .cover {
   aspect-ratio: 3 / 4;
   width: 100%;
+  height: auto;
   object-fit: cover;
+}
+
+/* Cover art carries width/height="600/800" attributes for layout stability.
+   Those attributes become a fixed 800px height unless CSS releases it, which
+   made every cover card taller than its frame. */
+img.cover {
+  height: auto;
 }
 
 .art-card-1 {
@@ -1720,6 +1728,7 @@ ul, ol {
 .detail-cover .cover {
   width: 100%;
   aspect-ratio: 3 / 4;
+  height: auto;
   object-fit: cover;
 }
 
