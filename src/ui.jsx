@@ -213,7 +213,10 @@ export function Cover({ ebook, className = "", lazy = true }) {
       className={cx("cover", className)}
       src={src}
       alt={ebook?.title || "Ebook cover"}
+      width="600"
+      height="800"
       loading={lazy ? "lazy" : "eager"}
+      decoding="async"
     />
   );
 }

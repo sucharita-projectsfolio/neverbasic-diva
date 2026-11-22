@@ -13,6 +13,7 @@ import {
   useWishlist,
 } from "../lib/api.jsx";
 import { methodsForCurrency, startPayment } from "../lib/pay.jsx";
+import { trackMeta } from "../lib/track.js";
 import {
   Button,
   Chip,
@@ -338,6 +339,18 @@ export function BundlePage({ slug }) {
     return () => {
       alive = false;
     };
+  }, [bundle && bundle.id]);
+
+  useEffect(() => {
+    if (!bundle) return;
+    trackMeta("InitiateCheckout", {
+      content_ids: (bundle.items || []).map((item) => item.id),
+      content_name: bundle.title,
+      content_type: "product",
+      value: Number(bundle.price) || 0,
+      currency: "INR",
+      num_items: (bundle.items || []).length || 1,
+    });
   }, [bundle && bundle.id]);
 
   if (!bundle) {

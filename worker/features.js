@@ -207,6 +207,8 @@ export async function siteExtras(env, settings) {
   return {
     features,
     bump,
+    // Public pixel id only. The Conversions API token stays server-side.
+    metaPixelId: settings.meta_pixel_enabled === "1" ? U.clean(settings.meta_pixel_id, 30) : "",
     currency: gateway.currency,
     currencySymbol: gateway.symbol,
     payment: gateway.public,

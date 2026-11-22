@@ -31,6 +31,7 @@ function Card({ title, hint, children, actions }) {
 
 const TABS = [
   ["features", "Features"],
+  ["ads", "Meta ads"],
   ["coupons", "Coupons"],
   ["bundles", "Bundles"],
   ["journal", "Journal"],
@@ -50,6 +51,7 @@ export default function Growth({ data, reload }) {
         ))}
       </div>
       {tab === "features" ? <Features data={data} reload={reload} /> : null}
+      {tab === "ads" ? <Ads data={data} reload={reload} /> : null}
       {tab === "coupons" ? <Coupons data={data} reload={reload} /> : null}
       {tab === "bundles" ? <Bundles data={data} reload={reload} /> : null}
       {tab === "journal" ? <Journal data={data} reload={reload} /> : null}
@@ -199,6 +201,136 @@ function Features({ data, reload }) {
         <Button variant="secondary" onClick={save} loading={saving}>
           Save copy
         </Button>
+      </Card>
+    </div>
+  );
+}
+
+/* -------------------------------- meta ads -------------------------------- */
+
+function Ads({ data, reload }) {
+  const toast = useToast();
+  const settings = data.settings || {};
+  const [form, setForm] = useState({
+    enabled: settings.meta_pixel_enabled === "1",
+    pixel: settings.meta_pixel_id || "",
+    token: "",
+    test: settings.meta_test_code || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const savedToken = Boolean(settings.meta_capi_token);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const body = {
+        meta_pixel_enabled: form.enabled ? "1" : "0",
+        meta_pixel_id: form.pixel.trim(),
+        meta_test_code: form.test.trim(),
+      };
+      // Blank keeps the saved token, so the secret never has to be typed again.
+      if (form.token.trim()) body.meta_capi_token = form.token.trim();
+      await api("/api/admin/settings", { method: "POST", body });
+      toast("Meta ads settings saved");
+      setForm((current) => ({ ...current, token: "" }));
+      await reload();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="stack-lg">
+      <Card
+        title="Meta pixel & Conversions API"
+        hint="Turn this on before you spend on Instagram or Facebook ads. Page views, product views, checkouts and purchases are sent; admin pages never are."
+        actions={
+          <Button size="sm" onClick={save} loading={saving}>
+            Save ads setup
+          </Button>
+        }
+      >
+        <Toggle
+          checked={form.enabled}
+          onChange={(value) => setForm({ ...form, enabled: value })}
+          label="Track Meta ads"
+          hint="Off = the pixel is not loaded at all and no events are sent."
+        />
+        <div className="two-col">
+          <Field label="Pixel ID" hint="Meta Events Manager → Data sources → your pixel → Settings. Numbers only.">
+            <Input
+              value={form.pixel}
+              onChange={(event) => setForm({ ...form, pixel: event.target.value.replace(/[^\d]/g, "") })}
+              placeholder="123456789012345"
+              inputMode="numeric"
+            />
+          </Field>
+          <Field label="Test event code" hint="Optional. Shows test purchases in Events Manager → Test events. Clear it before real ads.">
+            <Input
+              value={form.test}
+              onChange={(event) => setForm({ ...form, test: event.target.value.trim() })}
+              placeholder="TEST12345"
+            />
+          </Field>
+        </div>
+        <Field
+          label="Conversions API token"
+          hint={
+            savedToken
+              ? "Saved on the server. Leave blank to keep it; paste a new one only to rotate."
+              : "Optional but strongly recommended. Events Manager → Settings → Conversions API → Generate access token. It is stored server-side and never sent to the browser."
+          }
+        >
+          <Input
+            type="password"
+            autoComplete="off"
+            value={form.token}
+            onChange={(event) => setForm({ ...form, token: event.target.value })}
+            placeholder={savedToken ? "••••••••  (saved)" : "Paste access token"}
+          />
+        </Field>
+        <p className="field-hint">
+          With the token saved, every paid order also sends a server-side Purchase with the same event ID as the
+          browser, so Meta counts it once even when a phone blocks the pixel.
+        </p>
+        <p className="field-hint">
+          Add one line to Policies before spending: “We use the Meta pixel to measure ad performance. A hashed
+          email or phone number may be shared with Meta for that measurement.” Admin pages are never tracked.
+        </p>
+        <Button variant="secondary" onClick={save} loading={saving}>
+          Save ads setup
+        </Button>
+      </Card>
+
+      <Card title="Low-budget playbook" hint="The settings that usually waste the least money when you are starting.">
+        <ol className="ads-playbook">
+          <li>
+            <strong>Objective: Sales, optimise Purchase.</strong> Not traffic, not engagement. One campaign, one ad set,
+            broad India 18–45, ₹300–500/day. Do not edit it for 3 days while it learns.
+          </li>
+          <li>
+            <strong>Volume first.</strong> Meta needs about 50 purchases a week per ad set to learn. Below that, run a
+            second ad set optimised for InitiateCheckout, then move budget to Purchase when sales come in.
+          </li>
+          <li>
+            <strong>Three creatives, three hooks.</strong> Same ebook, different first line. After 1,000 impressions,
+            pause anything below 1% CTR; keep the winner and make two variations of it.
+          </li>
+          <li>
+            <strong>Use a link with a code.</strong> Share <code>/checkout/&lt;ebook-id&gt;?code=YOURCODE</code> so the
+            discount applies itself. Match the code to the creative, not to the whole store.
+          </li>
+          <li>
+            <strong>Retarget the warm ones.</strong> ₹100–200/day on ViewContent + InitiateCheckout in the last 7 days.
+            Exclude buyers from the last 30 days.
+          </li>
+          <li>
+            <strong>Test before spending.</strong> Put a test event code above, open your own checkout, mark a test order
+            paid in Admin → Orders, and confirm Purchase appears once in Events Manager. Then clear the code.
+          </li>
+        </ol>
       </Card>
     </div>
   );

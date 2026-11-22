@@ -95,7 +95,7 @@ export default function Ebook3D({ ebook, price, note, badge, href }) {
           <div className="book3d-back" aria-hidden="true" />
           <div className="book3d-cover">
             {cover ? (
-              <img src={cover} alt="" loading="eager" />
+              <img src={cover} alt="" width="600" height="800" loading="eager" decoding="async" />
             ) : (
               <span className="book3d-cover-fallback">
                 <small>neverbasic diva</small>

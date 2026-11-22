@@ -15,8 +15,11 @@ import {
   StoreWidgets,
   WishlistPage,
 } from "./pages/Extras.jsx";
-import Admin from "./admin/Admin.jsx";
 import AccountPage from "./pages/Account.jsx";
+import { captureAttribution, initMetaPixel } from "./lib/track.js";
+
+// The whole admin panel is a separate chunk: shoppers never download it.
+const Admin = React.lazy(() => import("./admin/Admin.jsx"));
 
 function setMeta(name, content) {
   if (!content) return;
@@ -250,7 +253,12 @@ function Routes() {
   if (clean === "/policies") return <PoliciesPage />;
   if (clean === "/resell") return <ResellPage />;
   if (clean === "/resell/portal") return <PortalPage />;
-  if (clean === "/admin") return <Admin />;
+  if (clean === "/admin")
+    return (
+      <React.Suspense fallback={<div className="boot"><div className="boot-mark">✿</div><p>Opening the studio…</p></div>}>
+        <Admin />
+      </React.Suspense>
+    );
   return <Home />;
 }
 
@@ -322,6 +330,15 @@ function Shell() {
   const { theme, shape, font } = useMemo(() => readKit(site), [site]);
 
   useEffect(() => {
+    if (!site?.metaPixelId || window.location.pathname.startsWith("/admin")) return;
+    initMetaPixel(site.metaPixelId);
+    captureAttribution();
+  }, [site?.metaPixelId]);
+
+  useEffect(() => {
+    // Do not replace the server-rendered title with a "not found" one while the
+    // catalogue is still loading.
+    if (!site) return;
     const root = document.documentElement;
     if (settings.accent_color) root.style.setProperty("--accent", settings.accent_color);
     if (settings.ink_color) root.style.setProperty("--ink", settings.ink_color);

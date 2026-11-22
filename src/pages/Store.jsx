@@ -32,6 +32,7 @@ import {
 } from "../ui.jsx";
 import EbookCard, { WishButton } from "./EbookCard.jsx";
 import { readKit } from "../lib/sitekit.js";
+import { readAttribution, trackMeta } from "../lib/track.js";
 import { Rich } from "./blocks.jsx";
 import { ProductReviews, RatingInline, RecentlyViewed, ReviewForm, SampleModal, ShareRow, useTrackRecent } from "./Extras.jsx";
 
@@ -98,6 +99,17 @@ export function EbookPage({ slug }) {
       ? (site.bundles || []).find((bundle) => (bundle.items || []).some((item) => item.id === ebook.id))
       : null;
   useTrackRecent(ebook);
+
+  useEffect(() => {
+    if (!ebook) return;
+    trackMeta("ViewContent", {
+      content_ids: [ebook.id],
+      content_name: ebook.title,
+      content_type: "product",
+      value: Number(ebook.price) || 0,
+      currency: "INR",
+    });
+  }, [ebook && ebook.id]);
 
   if (!ebook) {
     return (
@@ -354,6 +366,18 @@ export function Checkout({ ebookId }) {
     };
   }, [ebook && ebook.id]);
 
+  useEffect(() => {
+    if (!ebook) return;
+    trackMeta("InitiateCheckout", {
+      content_ids: [ebook.id],
+      content_name: ebook.title,
+      content_type: "product",
+      value: Number(ebook.price) || 0,
+      currency: "INR",
+      num_items: 1,
+    });
+  }, [ebook && ebook.id]);
+
   if (!ebook) {
     return (
       <div className="page wrap">
@@ -422,6 +446,7 @@ export function Checkout({ ebookId }) {
           ebookId: ebook.id,
           kind: "ebook",
           bumpId: withBump && bump ? bump.id : "",
+          attr: readAttribution(),
           code: coupon ? coupon.code : "",
           currency,
           method: activeMethod ? activeMethod.id : "",
@@ -623,6 +648,34 @@ export function OrderPage({ reference }) {
   const [refundForm, setRefundForm] = useState({ preference: "material", reason: "" });
   const ref = decodeURIComponent(reference || "");
   const query = useMemo(() => new URLSearchParams(path.split("?")[1] || ""), [path]);
+
+  useEffect(() => {
+    const order = data && data.order;
+    if (!order || order.status !== "paid") return;
+    const key = `nbd:meta:purchase:${order.ref}`;
+    try {
+      if (window.localStorage.getItem(key)) return;
+    } catch {
+      /* private mode */
+    }
+    trackMeta(
+      "Purchase",
+      {
+        value: Number(order.amountCharged) || Number(order.amount) || 0,
+        currency: order.currency || "INR",
+        content_ids: (data.items || []).map((item) => item.id),
+        content_type: "product",
+        num_items: (data.items || []).length || 1,
+        order_id: order.ref,
+      },
+      `purchase-${order.ref}`
+    );
+    try {
+      window.localStorage.setItem(key, "1");
+    } catch {
+      /* private mode */
+    }
+  }, [data]);
 
   useEffect(() => {
     const fromQuery = query.get("email") || "";
@@ -1069,7 +1122,16 @@ function AutoDownload({ url, orderRef }) {
       /* private mode */
     }
     const timer = window.setTimeout(() => {
-      window.location.href = url;
+      // A real download link, not a page navigation: the buyer stays on the
+      // order page (receipt, re-download, support) and the Purchase pixel is not
+      // cancelled by an unload.
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "";
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     }, 700);
     return () => window.clearTimeout(timer);
   }, [url, orderRef]);

@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { captureAttribution, initMetaPixel } from "./track.js";
 
 export async function api(path, { method = "GET", body, form } = {}) {
   const options = { method, credentials: "same-origin", headers: {} };
@@ -145,6 +146,13 @@ export function SiteProvider({ children }) {
   const load = useCallback(async () => {
     try {
       const data = await api("/api/site");
+      // Start the pixel before any page renders, so ViewContent/InitiateCheckout
+      // are never fired into an uninitialised queue. Admin visits are not store
+      // traffic and must never inflate ad numbers.
+      if (!window.location.pathname.startsWith("/admin")) {
+        initMetaPixel(data.metaPixelId);
+        captureAttribution();
+      }
       setSite(data);
       setError("");
     } catch (err) {

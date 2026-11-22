@@ -26,6 +26,7 @@ import {
   verifyStripeSignature,
 } from "./payments.js";
 import { accountRoute, customerFromRequest } from "./accounts.js";
+import { sendMetaPurchase } from "./meta.js";
 import { servePage } from "./seo.js";
 import { convertFromInr, countryOf, formatMoney, pricingState, readRates, resolveCurrency } from "./currency.js";
 import {
@@ -86,11 +87,11 @@ export default {
 
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.gstatic.com https://apis.google.com",
+  "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com https://www.gstatic.com https://apis.google.com https://connect.facebook.net",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://firebaseinstallations.googleapis.com",
+  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com https://checkout.razorpay.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://firebaseinstallations.googleapis.com https://connect.facebook.net https://www.facebook.com",
   "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://checkout.stripe.com https://*.firebaseapp.com https://accounts.google.com",
   "object-src 'none'",
   "base-uri 'self'",
@@ -335,6 +336,7 @@ async function createOrder(env, request) {
   const name = U.oneLine(body.name, 80);
   const email = U.clean(body.email, 160).toLowerCase();
   const phone = U.clean(body.phone, 20);
+  const attr = body.attr && typeof body.attr === "object" ? body.attr : {};
 
   if (name.length < 2) return U.bad("Please add your name.");
   if (!U.isEmail(email)) return U.bad("Please add a valid email — your access is tied to it.");
@@ -368,6 +370,19 @@ async function createOrder(env, request) {
     audience: U.clean(body.audience, 40),
     preference: U.clean(body.preference, 40),
     ...purchase.meta,
+    // Ad attribution captured on the first visit and, where present, Meta's own
+    // click/browser cookies. Used for the server-side Purchase event.
+    attribution: {
+      fbp: U.clean(cookieValue(request.headers.get("cookie") || "", "_fbp"), 120),
+      fbc: U.clean(cookieValue(request.headers.get("cookie") || "", "_fbc"), 200),
+      fbclid: U.clean(attr.fbclid, 200),
+      utm_source: U.clean(attr.utm_source, 80),
+      utm_medium: U.clean(attr.utm_medium, 80),
+      utm_campaign: U.clean(attr.utm_campaign, 120),
+      utm_content: U.clean(attr.utm_content, 120),
+      utm_term: U.clean(attr.utm_term, 120),
+      landing: U.clean(attr.landing, 200),
+    },
     coupon: coupon ? { code: coupon.code, label: coupon.label, discount: coupon.discount } : null,
     discount: coupon ? coupon.discount : 0,
     origin: U.originOf(request),
@@ -586,7 +601,22 @@ async function markOrderPaid(env, db, ref, { txnid = "", mode = "", note = "" } 
   }
   const paid = await db.prepare("SELECT * FROM orders WHERE ref = ?").bind(ref).first();
   await deliverOrderEmail(env, paid).catch((error) => console.error("order_email_failed", ref, error && error.message));
+  // Server-side Purchase with the same event id as the browser pixel.
+  const settings = await getSettings(db);
+  await sendMetaPurchase(env, settings, paid).catch((error) =>
+    console.error("meta_capi_failed", ref, error && error.message)
+  );
   return paid;
+}
+
+function cookieValue(header, name) {
+  const match = new RegExp(`(?:^|;\\s*)${name}=([^;]+)`).exec(String(header || ""));
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }
 
 // Emails the bought PDF(s) plus a PDF receipt. Never blocks the unlock: if the

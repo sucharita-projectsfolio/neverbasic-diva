@@ -372,6 +372,13 @@ export const DEFAULT_SETTINGS = {
   newsletter_heading: "One letter. One useful idea. No noise.",
   newsletter_note: "Get new ebooks and the unspoken notes before they go public. Unsubscribe in one click.",
   whatsapp_note: "Questions before you buy? Message us — a human replies.",
+
+  // Meta ads: browser pixel + optional Conversions API (same event id, so Meta
+  // deduplicates instead of counting a purchase twice).
+  meta_pixel_enabled: "0",
+  meta_pixel_id: "",
+  meta_capi_token: "",
+  meta_test_code: "",
   exit_offer_heading: "Before you go — take 10% off",
   exit_offer_note: "Use this code at checkout. It works once, and only for a while.",
   exit_coupon_code: "",
@@ -390,6 +397,7 @@ export const MIGRATION_ALTERS = [
   "ALTER TABLE orders ADD COLUMN gateway_order_id TEXT DEFAULT ''",
   "ALTER TABLE orders ADD COLUMN customer_id TEXT DEFAULT ''",
   "ALTER TABLE orders ADD COLUMN email_sent_at TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN meta_capi_at TEXT DEFAULT ''",
   "ALTER TABLE reviews ADD COLUMN source TEXT DEFAULT 'customer'",
   "CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, name TEXT DEFAULT '', email TEXT NOT NULL UNIQUE, phone TEXT DEFAULT '', country TEXT DEFAULT '', pass_hash TEXT DEFAULT '', salt TEXT DEFAULT '', firebase_uid TEXT DEFAULT '', status TEXT DEFAULT 'active', created_at TEXT NOT NULL, last_login_at TEXT DEFAULT '')",
   "CREATE TABLE IF NOT EXISTS customer_sessions (token TEXT PRIMARY KEY, customer_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
