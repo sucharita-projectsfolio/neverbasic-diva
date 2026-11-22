@@ -207,7 +207,7 @@ export const DEFAULT_CONTENT = {
   shop_eyebrow: "the full library",
   shop_title: "Read it tonight, *use it tomorrow.*",
   shop_sub:
-    "Every ebook is short, specific and priced like a snack. Instant PDF access the moment payment clears — plus a lifetime order page you can return to.",
+    "Every ebook is short, specific and priced like a snack — the kind of thing most people learn only after it costs them. Instant PDF access the moment payment clears, plus a lifetime order page you can return to.",
   // misc chrome
   loading: "Opening the library…",
   offer_label: "offer ends in",
@@ -228,10 +228,10 @@ export const BLOCK_TYPES = [
     glyph: "✦",
     hint: "The first screen. Four layouts, with or without covers.",
     defaults: {
-      eyebrow: "micro-ebooks for women who refuse to stay basic",
-      title: "The rules they never taught you.",
-      sub: "Sharp, honest, uncomfortably useful ebooks on money, people and self-worth. Priced like a cup of chai — built to change how you move for years.",
-      note: "Every ebook is delivered the second your payment clears. No email chasing, no waiting list.",
+      eyebrow: "micro-ebooks · the knowledge 99% of people never get",
+      title: "The rules they *never* taught you.",
+      sub: "Money, people, power and self-worth — the psychology nobody explains out loud. Sharp, honest and uncomfortably useful, short enough to finish tonight and specific enough to use for years.",
+      note: "Instant PDF the second your payment clears, plus a permanent order page you can reopen any time. No email chasing, no waiting list.",
       primaryLabel: "Open the library",
       primaryLink: "/ebooks",
       secondaryLabel: "Resell & earn",
@@ -325,7 +325,7 @@ export const BLOCK_TYPES = [
     defaults: {
       eyebrow: "the library",
       title: "Small books. *Unfair* advantage.",
-      sub: "",
+      sub: "Each title targets one expensive mistake — money, boundaries, self-worth, leverage. No filler, no 300-page motivation, no advice you have already heard.",
       ctaLabel: "See all ebooks",
       ctaLink: "/ebooks",
       layout: "masonry",
@@ -355,23 +355,23 @@ export const BLOCK_TYPES = [
     defaults: {
       eyebrow: "why this hits different",
       title: "Not another *motivational* PDF.",
-      sub: "Every page is built to be used the same day. Frameworks, scripts and numbers — not vibes.",
+      sub: "The uncomfortable part most people avoid: your results come from what you know that they don't. These books hand you exactly that — scripts, numbers, boundaries and the words to say.",
       shape: "card",
       items: [
         {
           mark: "01",
-          title: "One sitting, not one month",
-          text: "Written tight. You can read any ebook on a commute and still have something to apply tonight.",
+          title: "The part nobody says out loud",
+          text: "The exact lines to use, the numbers to ask for, and the dynamics people pretend don't exist. That is the whole point of these books.",
         },
         {
           mark: "02",
-          title: "The part nobody says out loud",
-          text: "The exact lines to use, the numbers to ask for, the dynamics people pretend don't exist.",
+          title: "One sitting, not one month",
+          text: "Written tight. Read it on a commute and still have something to apply tonight, not in January.",
         },
         {
           mark: "03",
-          title: "Priced to travel",
-          text: "Less than a coffee, because the point is that you actually buy it instead of saving it for later.",
+          title: "Priced so you cannot talk yourself out of it",
+          text: "Less than a chai, because the point is that you actually read it instead of saving it for later.",
         },
         {
           mark: "04",

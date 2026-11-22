@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SiteProvider, useSite, usePath, Link, api, currentReseller, useWishlist } from "./lib/api.jsx";
 import { ToastHost } from "./ui.jsx";
 import { readKit, fillTokens } from "./lib/sitekit.js";
+import { applySeo, seoForPath } from "./lib/seo.js";
 import Home from "./pages/Home.jsx";
 import { Shop, EbookPage, Checkout, OrderPage, TrackPage } from "./pages/Store.jsx";
 import { SupportPage, RequestPage, RefundPage, PoliciesPage, ResellPage, PortalPage } from "./pages/Support.jsx";
@@ -323,20 +324,13 @@ function Shell() {
     root.style.setProperty("--r-lg", `${shape.lg}px`);
     root.style.setProperty("--font-display", font.display);
     root.style.setProperty("--font-body", font.body);
-    document.title =
-      theme.seoTitle || `${settings.brand_name || "Neverbasic Diva"} — ${settings.brand_tagline || "micro-ebooks"}`;
-    setMeta("description", theme.seoDescription || settings.brand_tagline);
+    // Per-route title, description, canonical and JSON-LD (see src/lib/seo.js).
+    applySeo({
+      ...seoForPath(path, site, { title: theme.seoTitle, description: theme.seoDescription }),
+      image: theme.ogImage || undefined,
+    });
     setMeta("theme-color", settings.accent_color);
-    if (theme.ogImage) {
-      let og = document.querySelector('meta[property="og:image"]');
-      if (!og) {
-        og = document.createElement("meta");
-        og.setAttribute("property", "og:image");
-        document.head.appendChild(og);
-      }
-      og.setAttribute("content", theme.ogImage);
-    }
-  }, [settings.accent_color, settings.ink_color, settings.bg_color, settings.brand_name, settings.brand_tagline, theme, shape, font]);
+  }, [settings.accent_color, settings.ink_color, settings.bg_color, settings.brand_name, settings.brand_tagline, theme, shape, font, path, site]);
 
   useEffect(() => {
     const { pathname } = new URL(path, window.location.origin);

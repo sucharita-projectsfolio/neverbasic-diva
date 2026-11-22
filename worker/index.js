@@ -26,6 +26,7 @@ import {
   verifyStripeSignature,
 } from "./payments.js";
 import { accountRoute, customerFromRequest } from "./accounts.js";
+import { servePage } from "./seo.js";
 import { convertFromInr, countryOf, formatMoney, pricingState, readRates, resolveCurrency } from "./currency.js";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -63,7 +64,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) {
-      const response = await env.ASSETS.fetch(request);
+      const response = await servePage(request, env);
       return withSecurityHeaders(response);
     }
 
